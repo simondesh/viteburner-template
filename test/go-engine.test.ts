@@ -11,6 +11,8 @@ import {
     selectMove,
     EVAL,
     INFLUENCE_MARGIN,
+    SHAPE,
+    shapeScore,
     type Grid,
 } from '../src/utils/go-engine.ts';
 
@@ -149,6 +151,35 @@ test('expandMove heavily penalizes self-atari', () => {
     const e = expandMove(grid, 0, 2, 'X'); // 1-liberty stone, captures nothing
     assert.ok(e);
     assert.ok(e!.ord < 0, `self-atari should score negative, got ${e!.ord}`);
+});
+
+test('shapeScore: a straight connection of two groups is rewarded', () => {
+    // Playing the middle of X.X joins two distinct one-stone groups in a straight line.
+    assert.equal(shapeScore(parseBoard(['X.X', '...', '...']), 0, 1, 'X'), SHAPE.CONNECT);
+});
+
+test('shapeScore: an empty triangle is penalised (bad-shaped connection)', () => {
+    // Playing (1,1) joins the two diagonal stones but forms an empty triangle
+    // (corner (0,0) empty): CONNECT - EMPTY_TRIANGLE, net negative.
+    assert.equal(shapeScore(parseBoard(['.X.', 'X..', '...']), 1, 1, 'X'), SHAPE.CONNECT - SHAPE.EMPTY_TRIANGLE);
+});
+
+test('shapeScore: a hane turning around an enemy stone in contact is rewarded', () => {
+    // (1,1) is diagonal to the enemy at (0,0) and shares the own stone at (1,0).
+    assert.equal(shapeScore(parseBoard(['O..', 'X..', '...']), 1, 1, 'X'), SHAPE.HANE);
+});
+
+test('shapeScore: a plain move with no neighbours scores zero', () => {
+    assert.equal(shapeScore(parseBoard(['..', '..']), 0, 0, 'X'), 0);
+});
+
+test('shapeScore is folded into expandMove ord', () => {
+    // (0,1) connects the two X groups in a straight line (+CONNECT). The own group
+    // then has 3 liberties, so the tactical base is only 3*5=15 — the ord clearing
+    // SHAPE.CONNECT proves the shape bonus was added.
+    const e = expandMove(parseBoard(['X.X', '...', '...']), 0, 1, 'X');
+    assert.ok(e);
+    assert.ok(e!.ord >= SHAPE.CONNECT, `connection shape bonus should be in ord, got ${e!.ord}`);
 });
 
 // ---------------------------------------------------------------------------

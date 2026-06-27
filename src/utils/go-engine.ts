@@ -11,6 +11,12 @@ export const DIRS: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], 
 export const POOL_MIN = 16;     // candidates expanded per node before taking the beam
 export const TIE_EPSILON = 0.5; // jitter-preserving slack on the root alpha window
 
+export const SHAPE = {
+    EMPTY_TRIANGLE: 50, // penalty: a bad-shaped (inefficient) connection
+    CONNECT: 40,        // bonus: joins two of our groups
+    HANE: 80,           // bonus: turns the corner around an enemy stone in contact
+} as const;
+
 // Static position-evaluation weights, from black's (our) perspective.
 export const EVAL = {
     STONE: 10,      // per stone on the board (area scoring)
@@ -172,6 +178,53 @@ export const secureTerritoryMask = (grid: Grid, color: string): boolean[][] => {
 };
 
 /**
+ * Local shape quality of playing `color` at (x, y), from the original board (no
+ * stone is played). Rewards good shape (connecting two groups; a hane that turns
+ * around an enemy stone we already touch) and penalises the empty triangle (a
+ * bad-shaped connection: two perpendicular own neighbours with an empty diagonal
+ * corner). Used to bias both the candidate ranking and the beam ordering.
+ */
+export const shapeScore = (grid: Grid, x: number, y: number, color: string): number => {
+    const size = grid.length;
+    const enemy = color === 'X' ? 'O' : 'X';
+    const at = (a: number, b: number): string | null =>
+        a < 0 || b < 0 || a >= size || b >= size ? null : grid[a][b];
+    const diagonals: [number, number][] = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+    let score = 0;
+
+    // Empty triangle: move + two perpendicular own neighbours, empty diagonal corner.
+    for (const [dx, dy] of diagonals) {
+        if (at(x + dx, y) === color && at(x, y + dy) === color && at(x + dx, y + dy) === '.') {
+            score -= SHAPE.EMPTY_TRIANGLE;
+        }
+    }
+
+    // Connection: the move joins >= 2 distinct own groups.
+    const seen = new Set<string>();
+    let ownGroups = 0;
+    for (const [dx, dy] of DIRS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (at(nx, ny) !== color || seen.has(`${nx},${ny}`)) continue;
+        ownGroups++;
+        for (const [cx, cy] of groupAt(grid, nx, ny).cells) seen.add(`${cx},${cy}`);
+    }
+    if (ownGroups >= 2) score += SHAPE.CONNECT;
+
+    // Hane: diagonal to an enemy stone while we touch one of the two shared cells
+    // (turning the corner around an enemy in contact).
+    for (const [dx, dy] of diagonals) {
+        if (at(x + dx, y + dy) !== enemy) continue;
+        if (at(x + dx, y) === color || at(x, y + dy) === color) {
+            score += SHAPE.HANE;
+            break;
+        }
+    }
+
+    return score;
+};
+
+/**
  * Cheap best-first ranking of candidate moves for `color` — no board is played,
  * so it is fast enough to call at every search node. Applies the same two
  * exclusions the search relies on: never our own secure territory/eyes, and never
@@ -225,6 +278,7 @@ export const rankMoves = (grid: Grid, color: string): { x: number; y: number; sc
             if (threatened > 0) score += 300 + threatened * 30;
             if (rescued > 0) score += 200 + rescued * 50;
             if (touchesEnemy) score += 50;
+            score += shapeScore(grid, x, y, color);
 
             out.push({ x, y, score });
         }
@@ -274,6 +328,7 @@ export const expandMove = (
     if (rescued > 0 && own.liberties > 1) ord += 500 + rescued * 50;
     if (threatened > 0) ord += 300 + threatened * 30;
     if (played.captured === 0 && own.liberties === 1) ord -= 10000;
+    ord += shapeScore(grid, x, y, color);
 
     return { grid: played.grid, ord };
 };
