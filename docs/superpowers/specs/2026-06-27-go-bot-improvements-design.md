@@ -32,7 +32,8 @@ The IPvGO bot (`src/utils/go.ts` + `src/utils/go-engine.ts`) has three weaknesse
    where breadth is genuinely unaffordable.
 3. Make a single, strong search depth (4) affordable on every board size via sound search
    efficiency.
-4. Climb the faction ladder easiest-first by win streak, on graduated board sizes.
+4. Climb the faction ladder easiest-first by win streak, starting every faction on the
+   smallest board and escalating board size only when the streak proves unreachable there.
 5. Keep the engine pure and unit-tested; keep the driver a thin NS shell.
 
 ## Decisions (locked)
@@ -42,10 +43,10 @@ The IPvGO bot (`src/utils/go.ts` + `src/utils/go-engine.ts`) has three weaknesse
 | Search depth | **Flat `SEARCH_DEPTH = 4`** (even ⇒ horizon ends on the opponent's reply, on every board). |
 | Branch width | **Board-scaled**, wide on small boards, narrow only on big ones (table below). |
 | Search efficiency | **Root-alpha threading** in `selectMove` + **lazy move ordering** in the engine, so depth-4 wide search stays affordable. |
-| Faction advance | **Win-streak based:** advance once `highestWinStreak >= STREAK_TARGET` (default **5**). |
+| Faction advance | **Win-streak based:** advance once `highestWinStreak >= STREAK_TARGET` (default **10**). |
 | Faction order | Netburners → Slum Snakes → The Black Hand → Tetrads → Daedalus → Illuminati → "????????????". |
-| Board mapping | **Graduated:** Netburners/Slum Snakes → 5; Black Hand/Tetrads → 7; Daedalus → 9; Illuminati/???? → 13. |
-| Progression state | **Derived from `ns.go.getStats()`** each game (it persists across games and script restarts); no own bookkeeping. |
+| Board sizing | **Adaptive, smallest-first:** *every* faction (including the hardest) starts at 5×5; escalate to the next size (5 → 7 → 9 → 13) after `ESCALATE_AFTER_GAMES` games on the current board without reaching the streak. 13×13 is the ceiling. |
+| Progression state | Faction choice is **derived from `ns.go.getStats()`** (persists across restarts). Per-faction *board* progress is tracked in a small JSON state file on home (`go-progress.txt`), because `getStats()` does not break results down by board size. |
 
 ### Board-scaled branch widths
 
@@ -64,29 +65,36 @@ Pure-core / thin-shell split, consistent with the rest of the codebase.
 
 | File | Role | Tested |
 |---|---|---|
-| `src/utils/go-ladder.ts` | **NEW, pure.** `FACTION_LADDER`, `BOARD_FOR_FACTION`, `BRANCH_FOR_BOARD`, `SEARCH_DEPTH`, `STREAK_TARGET`; `chooseFaction(stats, streakTarget)`, `boardForFaction(faction)`, `branchForBoard(size)`. No NS. | ✅ `node --test` |
+| `src/utils/go-ladder.ts` | **NEW, pure.** `FACTION_LADDER`, `BOARD_SIZES`, `BRANCH_FOR_BOARD`, `SEARCH_DEPTH`, `STREAK_TARGET`, `ESCALATE_AFTER_GAMES`; `chooseFaction(stats, streakTarget)`, `nextBoard(size)`, `resolveBoard(progressEntry, escalateAfter)`, `branchForBoard(size)`. No NS. | ✅ `node --test` |
 | `src/utils/go-engine.ts` | **Modified.** `search`/`selectMove` take a `nodeBranch` parameter; `selectMove` threads root alpha; move ordering becomes lazy (cheap rank + on-demand child-board generation). | ✅ extend existing tests |
-| `src/utils/go.ts` | **Modified, thin shell.** Per game: `getStats()` → ladder picks faction/board/branch → `resetBoardState` → play with `selectMove(grid, valid, SEARCH_DEPTH, rootBranch, nodeBranch)` → log the faction's live stats. | in-game |
+| `src/utils/go.ts` | **Modified, thin shell.** Reads/writes `go-progress.txt`. Per game: `getStats()` → `chooseFaction` → `resolveBoard(progress[faction])` → `branchForBoard` → `resetBoardState` → play with `selectMove(grid, valid, SEARCH_DEPTH, rootBranch, nodeBranch)` → persist progress → log the faction's live stats. | in-game |
 
 ## Data flow
 
 ### Per-game loop (`go.ts`)
 
-1. `stats = ns.go.getStats()`.
-2. `faction = chooseFaction(stats, STREAK_TARGET)` — first faction in the ladder whose
-   `highestWinStreak < STREAK_TARGET`; if all are cleared, the last (hardest) faction, which
-   we then keep farming for ongoing streak rep.
-3. `size = boardForFaction(faction)`; `{ rootBranch, nodeBranch } = branchForBoard(size)`.
-4. `ns.go.resetBoardState(faction, size)`.
+1. Read and parse `go-progress.txt` → a per-faction `{ board, games }` map (`{}` if missing
+   or unparseable).
+2. `stats = ns.go.getStats()`; `faction = chooseFaction(stats, STREAK_TARGET)` — first faction
+   in the ladder whose `highestWinStreak < STREAK_TARGET`; if all are cleared, the last
+   (hardest) faction, which we then keep farming for ongoing streak rep.
+3. `{ board, games } = resolveBoard(progress[faction], ESCALATE_AFTER_GAMES)` — applies any
+   pending board escalation (if `games` reached the budget on a non-max board, step up and
+   reset the counter). `{ rootBranch, nodeBranch } = branchForBoard(board)`.
+4. `ns.go.resetBoardState(faction, board)`.
 5. Play to game over: `chooseMove` builds the grid from `getBoardState()` +
    `analysis.getValidMoves()`, calls `selectMove(grid, valid, SEARCH_DEPTH, rootBranch, nodeBranch)`,
    then `makeMove`/`passTurn` and `opponentNextTurn`.
-6. Log the current faction's live stats from `getStats()` (`wins`/`losses`/`winStreak`/
-   `highestWinStreak`/`bonusPercent`).
+6. `progress[faction] = { board, games: games + 1 }`; write `go-progress.txt`. (Once a faction
+   clears, its entry is simply never read again.)
+7. Log the current faction's live stats from `getStats()` (`wins`/`losses`/`winStreak`/
+   `highestWinStreak`/`bonusPercent`) plus the current board.
 
-Because the faction is re-derived from `getStats()` every game, progression is automatic and
-survives script restarts; a broken streak simply means we keep playing the same faction until
-the target is reached.
+Because the faction is re-derived from `getStats()` every game, faction progression is
+automatic and survives restarts. Board escalation lives in `go-progress.txt`: each faction
+starts at 5×5 and steps up only after `ESCALATE_AFTER_GAMES` games there fail to reach the
+streak. A broken streak just means we keep playing the same faction/board until either the
+streak lands or the patience budget escalates the board.
 
 ### Search flow (`selectMove`, with root alpha)
 
@@ -128,9 +136,12 @@ Today `orderedMoves` calls `playStone` for *every* empty point (≈169 grid-clon
 
 ## Testing
 
-- `go-ladder.ts` — pure `node --test`: `chooseFaction` returns Netburners on empty stats;
-  skips factions with `highestWinStreak >= target`; returns the last faction when all cleared;
-  `boardForFaction` mapping; `branchForBoard` returns the table values; `SEARCH_DEPTH` is even (4).
+- `go-ladder.ts` — pure `node --test`: `chooseFaction` returns Netburners on empty stats,
+  skips factions with `highestWinStreak >= target`, returns the last faction when all cleared;
+  `nextBoard` steps 5 → 7 → 9 → 13 and caps at 13; `resolveBoard` returns 5×5 for a missing
+  entry, keeps the stored board while under budget, and escalates (resetting `games`) once
+  `games >= ESCALATE_AFTER_GAMES` on a non-max board; `branchForBoard` returns the table
+  values; `SEARCH_DEPTH` is even (4).
 - `go-engine.ts` — extend the existing 14 tests: `selectMove` still plays/passes correctly and
   is score-independent with root alpha; ordering still surfaces captures/atari/rescue first and
   buries self-atari after the lazy-ordering refactor; the candidate set/exclusions
@@ -145,4 +156,6 @@ Today `orderedMoves` calls `playStone` for *every* empty point (≈169 grid-clon
   fixed horizon.
 - Transposition table / iterative deepening.
 - Adaptive within-search beam widening near the root.
+- Smarter board-escalation signal — e.g. reset the patience budget whenever a new best streak
+  is reached, or escalate on consecutive losses — instead of the flat games-on-board budget.
 - Using the `ns.go.cheat` API.
