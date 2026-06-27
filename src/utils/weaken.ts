@@ -1,15 +1,8 @@
 import { NS } from '@ns';
 
+/** Dumb weaken worker. args: [target, additionalMsec]. */
 export async function main(ns: NS) {
     const target = ns.args[0] as string;
-
-    // // obtain root access
-    // ns.brutessh(target)
-    // ns.ftpcrack(target)
-    // ns.relaysmtp(target)
-    // ns.httpworm(target)
-    // ns.sqlinject(target)
-    // ns.nuke(target)
-
-    await ns.weaken(target);
+    const additionalMsec = (ns.args[1] as number) ?? 0;
+    await ns.weaken(target, { additionalMsec });
 }
