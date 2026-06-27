@@ -164,3 +164,31 @@ test('selectMove never returns a move the game marks invalid', () => {
     const move = selectMove(grid, valid, 4, 12, 12, () => 0);
     assert.ok(move === null || !(move[0] === 1 && move[1] === 2));
 });
+
+// ---------------------------------------------------------------------------
+// Regression guards for the headline fixes (positions verified against the
+// engine itself, not hand-guessed). Both assert the decision *changes*, which is
+// what would silently break if depth regressed to odd/shallow or the beam to too narrow.
+// ---------------------------------------------------------------------------
+
+test('a deeper search changes the chosen move (horizon parity)', () => {
+    // At depth 2 the search evaluates right after our own move; at depth 4 it sees
+    // the opponent's reply and prefers a different move. Guards the even-depth fix.
+    const grid = parseBoard(['.O.O.', 'O.OO.', '.OO..', 'XXX..', 'OO..X']);
+    const valid = allValid(grid);
+    const shallow = selectMove(grid, valid, 2, 12, 12, () => 0);
+    const deep = selectMove(grid, valid, 4, 12, 12, () => 0);
+    assert.ok(shallow && deep, 'both depths should play a move on this position');
+    assert.notDeepEqual(shallow, deep, 'search depth must influence the chosen move');
+});
+
+test('a wider beam changes the chosen move (no forward-pruning a tactic)', () => {
+    // A narrow beam prunes, sight-unseen, the move a wide beam plays. Guards the
+    // board-scaled wide beam against a regression to a too-narrow one.
+    const grid = parseBoard(['XOO.X', 'OX..X', '..OO.', 'XXX.O', 'XOX.X']);
+    const valid = allValid(grid);
+    const narrow = selectMove(grid, valid, 4, 2, 2, () => 0);
+    const wide = selectMove(grid, valid, 4, 25, 25, () => 0);
+    assert.ok(narrow && wide, 'both beam widths should play a move on this position');
+    assert.notDeepEqual(narrow, wide, 'beam width must influence the chosen move');
+});

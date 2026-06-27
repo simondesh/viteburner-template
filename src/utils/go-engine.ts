@@ -174,6 +174,8 @@ export const secureTerritoryMask = (grid: Grid, color: string): boolean[][] => {
  * a "deep self-fill" well inside our influence that neither touches the enemy nor
  * rescues a group. Captures and atari/rescue tactics score highest so they always
  * survive the per-node beam, even though no stone is actually played here.
+ * Suicides are NOT filtered here (we play no stone to detect them); they score
+ * low and are dropped downstream when `expandMove` returns null for them.
  */
 export const rankMoves = (grid: Grid, color: string): { x: number; y: number; score: number }[] => {
     const size = grid.length;

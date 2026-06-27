@@ -158,4 +158,10 @@ Today `orderedMoves` calls `playStone` for *every* empty point (≈169 grid-clon
 - Adaptive within-search beam widening near the root.
 - Smarter board-escalation signal — e.g. reset the patience budget whenever a new best streak
   is reached, or escalate on consecutive losses — instead of the flat games-on-board budget.
+
+**Assumptions to validate in-game:** board escalation steps *up* (5 → 7 → 9 → 13) on the
+premise that bigger boards are more winnable for hard factions (per the user's experience). If
+that is backwards for a given faction, escalating would make it harder. Also, there is no
+"give up" path: a faction that never reaches the streak farms 13×13 indefinitely rather than
+advancing past it. Both are acceptable for now but worth confirming once the bot has run.
 - Using the `ns.go.cheat` API.
