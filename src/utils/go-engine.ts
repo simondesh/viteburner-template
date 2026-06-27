@@ -8,8 +8,8 @@ export type Grid = string[][];
 
 export const DIRS: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
-// Search shape used by the bounded minimax below.
-export const NODE_BRANCH = 6; // candidate moves considered at each interior node
+export const POOL_MIN = 16;     // candidates expanded per node before taking the beam
+export const TIE_EPSILON = 0.5; // jitter-preserving slack on the root alpha window
 
 // Static position-evaluation weights, from black's (our) perspective.
 export const EVAL = {
@@ -168,74 +168,121 @@ export const secureTerritoryMask = (grid: Grid, color: string): boolean[][] => {
 };
 
 /**
- * Generate the legal moves for `color`, each with the resulting board, ordered
- * best-first. Ordering decides which moves the bounded search considers, so it
- * surfaces the tactically critical ones (captures, rescuing our groups from atari,
- * threatening the opponent) and buries self-atari.
- *
- * Two classes of move are excluded outright because they only ever shed our own
- * points / eye space, so when they are the only moves left the candidate list is
- * empty and we pass instead of self-destructing:
- *   1. filling our own secure (fully enclosed) territory, and
- *   2. "deep self-fills": empty points well inside our own sphere of influence
- *      that neither touch the enemy nor rescue one of our groups. These are the
- *      blank points the bot is meant to keep — playing them collapses eye space
- *      and shortens our own liberties for no compensating gain, even when a lone
- *      invader leaves the surrounding region technically "contested".
+ * Cheap best-first ranking of candidate moves for `color` — no board is played,
+ * so it is fast enough to call at every search node. Applies the same two
+ * exclusions the search relies on: never our own secure territory/eyes, and never
+ * a "deep self-fill" well inside our influence that neither touches the enemy nor
+ * rescues a group. Captures and atari/rescue tactics score highest so they always
+ * survive the per-node beam, even though no stone is actually played here.
  */
-export const orderedMoves = (grid: Grid, color: string) => {
+export const rankMoves = (grid: Grid, color: string): { x: number; y: number; score: number }[] => {
     const size = grid.length;
     const enemy = color === 'X' ? 'O' : 'X';
     const ownTerritory = secureTerritoryMask(grid, color);
     const distOwn = floodDistances(grid, color);
     const distEnemy = floodDistances(grid, enemy);
-    const candidates: { x: number; y: number; grid: Grid; ord: number }[] = [];
+    const out: { x: number; y: number; score: number }[] = [];
 
     for (let x = 0; x < size; x++) {
         for (let y = 0; y < size; y++) {
             if (grid[x][y] !== '.') continue;
-            if (ownTerritory[x][y]) continue; // never fill our own secure territory / eyes
+            if (ownTerritory[x][y]) continue;
 
-            // Inspect the original board around this point for tactical context.
-            let touchesEnemy = false;  // adjoins an enemy stone (capture / atari / reduction)
-            let rescued = 0;           // our own stones currently in atari that this move adjoins
-            let threatened = 0;        // enemy stones we'd push to a single liberty
+            let touchesEnemy = false;
+            let rescued = 0;    // our stones in atari this move would adjoin
+            let captures = 0;   // enemy stones captured (their last liberty is here)
+            let threatened = 0; // enemy stones pushed toward capture (2 liberties)
+            let adjEmpty = 0;   // liberty proxy
             for (const [dx, dy] of DIRS) {
                 const nx = x + dx;
                 const ny = y + dy;
                 if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
                 const cell = grid[nx][ny];
-                if (cell === color) {
+                if (cell === '.') {
+                    adjEmpty++;
+                } else if (cell === color) {
                     const g = groupAt(grid, nx, ny);
                     if (g.liberties === 1) rescued += g.cells.length;
                 } else if (cell === enemy) {
                     touchesEnemy = true;
                     const g = groupAt(grid, nx, ny);
-                    if (g.liberties === 2) threatened += g.cells.length;
+                    if (g.liberties === 1) captures += g.cells.length;
+                    else if (g.liberties === 2) threatened += g.cells.length;
                 }
             }
 
-            // Keep blank points inside our own territory: clearly our influence,
-            // no enemy contact, not rescuing a group of ours.
             const margin = distEnemy[x][y] - distOwn[x][y];
             if (!touchesEnemy && rescued === 0 && distOwn[x][y] < Infinity && margin >= 2) continue;
 
-            const played = playStone(grid, x, y, color);
-            if (played === null) continue; // illegal (suicide)
+            let score = adjEmpty;
+            if (captures > 0) score += 1000 + captures * 100;
+            if (threatened > 0) score += 300 + threatened * 30;
+            if (rescued > 0) score += 200 + rescued * 50;
+            if (touchesEnemy) score += 50;
 
-            const own = groupAt(played.grid, x, y); // liberties already reflect captures
-            let ord = played.captured * 1000 + own.liberties * 5;
-
-            if (rescued > 0 && own.liberties > 1) ord += 500 + rescued * 50; // genuine escape
-            if (threatened > 0) ord += 300 + threatened * 30;                // atari threat
-            if (played.captured === 0 && own.liberties === 1) ord -= 10000;  // self-atari (last resort)
-
-            candidates.push({ x, y, grid: played.grid, ord });
+            out.push({ x, y, score });
         }
     }
 
-    candidates.sort((a, b) => b.ord - a.ord);
-    return candidates;
+    out.sort((a, b) => b.score - a.score);
+    return out;
+};
+
+/**
+ * Play `color` at (x, y) and return the resulting board plus an exact tactical
+ * ordering score (captures, resulting liberties, rescue/threat bonuses, heavy
+ * self-atari penalty), or null for an illegal (suicide) move. This is the precise
+ * score the search sorts its beam by; rankMoves only decides which moves are worth
+ * expanding.
+ */
+export const expandMove = (
+    grid: Grid,
+    x: number,
+    y: number,
+    color: string,
+): { grid: Grid; ord: number } | null => {
+    const size = grid.length;
+    const enemy = color === 'X' ? 'O' : 'X';
+
+    let rescued = 0;
+    let threatened = 0;
+    for (const [dx, dy] of DIRS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        const cell = grid[nx][ny];
+        if (cell === color) {
+            const g = groupAt(grid, nx, ny);
+            if (g.liberties === 1) rescued += g.cells.length;
+        } else if (cell === enemy) {
+            const g = groupAt(grid, nx, ny);
+            if (g.liberties === 2) threatened += g.cells.length;
+        }
+    }
+
+    const played = playStone(grid, x, y, color);
+    if (played === null) return null;
+
+    const own = groupAt(played.grid, x, y);
+    let ord = played.captured * 1000 + own.liberties * 5;
+    if (rescued > 0 && own.liberties > 1) ord += 500 + rescued * 50;
+    if (threatened > 0) ord += 300 + threatened * 30;
+    if (played.captured === 0 && own.liberties === 1) ord -= 10000;
+
+    return { grid: played.grid, ord };
+};
+
+/** Expand the best `nodeBranch` moves for `color`, best-first by exact score. */
+const beam = (grid: Grid, color: string, nodeBranch: number): { grid: Grid; ord: number }[] => {
+    const ranked = rankMoves(grid, color);
+    const poolSize = Math.max(nodeBranch, POOL_MIN);
+    const expanded: { grid: Grid; ord: number }[] = [];
+    for (const c of ranked.slice(0, poolSize)) {
+        const e = expandMove(grid, c.x, c.y, color);
+        if (e !== null) expanded.push(e);
+    }
+    expanded.sort((a, b) => b.ord - a.ord);
+    return expanded.slice(0, nodeBranch);
 };
 
 /**
@@ -293,81 +340,91 @@ export const evaluateBoard = (grid: Grid): number => {
 };
 
 /**
- * Alpha-beta minimax. Returns the evaluated value (black-positive) of best play
- * from this position with `toMove` to play. Black ('X', us) maximises.
+ * Alpha-beta minimax. Returns the value (black-positive) of best play from this
+ * position with `toMove` to play, expanding at most `nodeBranch` moves per node.
+ * Black ('X', us) maximises.
  */
-export const search = (grid: Grid, toMove: string, depth: number, alpha: number, beta: number): number => {
+export const search = (
+    grid: Grid,
+    toMove: string,
+    depth: number,
+    alpha: number,
+    beta: number,
+    nodeBranch: number,
+): number => {
     if (depth === 0) return evaluateBoard(grid);
 
-    const moves = orderedMoves(grid, toMove).slice(0, NODE_BRANCH);
+    const moves = beam(grid, toMove, nodeBranch);
     if (moves.length === 0) return evaluateBoard(grid); // no play available — stand pat
 
     if (toMove === 'X') {
         let best = -Infinity;
         for (const m of moves) {
-            best = Math.max(best, search(m.grid, 'O', depth - 1, alpha, beta));
+            best = Math.max(best, search(m.grid, 'O', depth - 1, alpha, beta, nodeBranch));
             alpha = Math.max(alpha, best);
-            if (alpha >= beta) break; // opponent won't allow this line
+            if (alpha >= beta) break;
         }
         return best;
     }
 
     let best = Infinity;
     for (const m of moves) {
-        best = Math.min(best, search(m.grid, 'X', depth - 1, alpha, beta));
+        best = Math.min(best, search(m.grid, 'X', depth - 1, alpha, beta, nodeBranch));
         beta = Math.min(beta, best);
-        if (alpha >= beta) break; // we won't allow this line
+        if (alpha >= beta) break;
     }
     return best;
 };
 
 /**
- * Choose our ('X') move for a position: order our legal moves, search each, and
- * return the best — or null to pass.
- *
- * Pass policy: we decline to play when no candidate improves on simply passing
- * (`bestValue <= passValue`). This is intentionally NOT gated on being ahead.
- * The earlier design only banked the position when already winning, which both
- * (a) forced self-harming moves whenever we were behind, and (b) never actually
- * fired once the evaluation stopped over-valuing self-fills. Under area scoring
- * every genuine point (a capture, a dame, a reduction) still makes bestValue
- * exceed passValue, so the bot keeps playing while profitable moves remain and
- * only passes when the board is settled — regardless of the score.
- *
- * `validMoves` is the game's own legality grid (which also encodes ko); `rng`
- * is injectable so tie-break jitter is deterministic in tests.
+ * Choose our ('X') move: rank candidates cheaply, expand the best `rootBranch`
+ * into real boards, then search each with a window seeded from the running best
+ * (root alpha) so clearly-worse moves prune their subtree. A move must beat simply
+ * passing to be played; otherwise we pass (null). The window uses `bestValue −
+ * TIE_EPSILON` so genuinely tied moves still return exact values and the jitter
+ * tie-break (deterministic via `rng` in tests) still applies.
  */
 export const selectMove = (
     grid: Grid,
     validMoves: boolean[][],
     depth: number,
     rootBranch: number,
+    nodeBranch: number,
     rng: () => number = Math.random,
 ): [number, number] | null => {
-    const roots = orderedMoves(grid, 'X')
-        .filter((m) => validMoves[m.x]?.[m.y] === true)
-        .slice(0, rootBranch);
+    const ranked = rankMoves(grid, 'X').filter((m) => validMoves[m.x]?.[m.y] === true);
+    if (ranked.length === 0) return null;
 
-    if (roots.length === 0) return null;
+    const poolSize = Math.max(rootBranch, POOL_MIN);
+    const roots: { x: number; y: number; grid: Grid; ord: number }[] = [];
+    for (const c of ranked.slice(0, poolSize)) {
+        const e = expandMove(grid, c.x, c.y, 'X');
+        if (e !== null) roots.push({ x: c.x, y: c.y, grid: e.grid, ord: e.ord });
+    }
+    roots.sort((a, b) => b.ord - a.ord);
+    const top = roots.slice(0, rootBranch);
+    if (top.length === 0) return null;
+
+    // Baseline value of passing (standing pat). A move must beat this to be played.
+    const passValue = search(grid, 'O', depth - 1, -Infinity, Infinity, nodeBranch);
 
     let best: [number, number] | null = null;
-    let bestValue = -Infinity;
+    let bestValue = passValue;
     let bestJittered = -Infinity;
-    for (const m of roots) {
-        const value = search(m.grid, 'O', depth - 1, -Infinity, Infinity);
-        // Jitter only breaks ties; it never overrides a real difference.
+    for (const m of top) {
+        const window = best === null ? passValue : bestValue - TIE_EPSILON;
+        const value = search(m.grid, 'O', depth - 1, window, Infinity, nodeBranch);
+        if (value <= passValue) continue;                 // must beat passing
+        if (best !== null && value < bestValue) continue; // worse than the running best
         const jittered = value + rng() * 0.01;
         if (jittered > bestJittered) {
-            bestJittered = jittered;
-            bestValue = value;
             best = [m.x, m.y];
+            bestValue = Math.max(bestValue, value);
+            bestJittered = jittered;
         }
     }
 
-    const passValue = search(grid, 'O', depth - 1, -Infinity, Infinity);
-    if (bestValue <= passValue) return null;
-
-    return best;
+    return best; // null => pass
 };
 
 // ---------------------------------------------------------------------------
