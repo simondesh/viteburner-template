@@ -119,4 +119,4 @@ and desyncs.
   the pool).
 - Stock-market integration (`stock: true` HGW option).
 - Faction-aware share gating (only share while working for a faction; needs Singularity).
-- Absolute-timestamp self-correcting `additionalMsec` (worker recomputes from actual start).
+- Absolute-timestamp self-correcting `additionalMsec` (worker recomputes from actual start). **Known limitation this would fix:** because the scheduler re-fires batches each tick with per-tick `additionalMsec` offsets, batches launched in different ticks can land interleaved rather than cleanly ordered (weaken-time ≫ tick). It self-heals (state is re-derived every tick, so money/security stay correct) but undercuts batch-timing efficiency. The proper fix is a global schedule clock / tracking in-flight batches so landings are coordinated across ticks.
