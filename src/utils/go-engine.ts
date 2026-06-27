@@ -17,6 +17,11 @@ export const SHAPE = {
     HANE: 80,           // bonus: turns the corner around an enemy stone in contact
 } as const;
 
+export const TACTIC = {
+    ATARI_THREAT: 400, // a move that puts an adjacent enemy group in atari
+    DEFEND_WEAK: 150,  // a move that lifts a 2-liberty own group out of danger
+} as const;
+
 // Static position-evaluation weights, from black's (our) perspective.
 export const EVAL = {
     STONE: 10,      // per stone on the board (area scoring)
@@ -306,6 +311,7 @@ export const expandMove = (
 
     let rescued = 0;
     let threatened = 0;
+    let weakOwn = 0; // our adjacent groups at 2 liberties (in danger) before the move
     for (const [dx, dy] of DIRS) {
         const nx = x + dx;
         const ny = y + dy;
@@ -314,6 +320,7 @@ export const expandMove = (
         if (cell === color) {
             const g = groupAt(grid, nx, ny);
             if (g.liberties === 1) rescued += g.cells.length;
+            else if (g.liberties === 2) weakOwn += g.cells.length;
         } else if (cell === enemy) {
             const g = groupAt(grid, nx, ny);
             if (g.liberties === 2) threatened += g.cells.length;
@@ -329,6 +336,21 @@ export const expandMove = (
     if (threatened > 0) ord += 300 + threatened * 30;
     if (played.captured === 0 && own.liberties === 1) ord -= 10000;
     ord += shapeScore(grid, x, y, color);
+
+    // Defense: this move lifted a weak (2-liberty) own group to safety.
+    if (weakOwn > 0 && own.liberties > 2) ord += TACTIC.DEFEND_WEAK;
+
+    // Offense: any adjacent enemy group left in atari (1 liberty, not captured).
+    const atariSeen = new Set<string>();
+    for (const [dx, dy] of DIRS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        if (played.grid[nx][ny] !== enemy || atariSeen.has(`${nx},${ny}`)) continue;
+        const g = groupAt(played.grid, nx, ny);
+        for (const [cx, cy] of g.cells) atariSeen.add(`${cx},${cy}`);
+        if (g.liberties === 1) ord += TACTIC.ATARI_THREAT;
+    }
 
     return { grid: played.grid, ord };
 };

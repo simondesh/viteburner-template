@@ -12,6 +12,7 @@ import {
     EVAL,
     INFLUENCE_MARGIN,
     SHAPE,
+    TACTIC,
     shapeScore,
     type Grid,
 } from '../src/utils/go-engine.ts';
@@ -180,6 +181,20 @@ test('shapeScore is folded into expandMove ord', () => {
     const e = expandMove(parseBoard(['X.X', '...', '...']), 0, 1, 'X');
     assert.ok(e);
     assert.ok(e!.ord >= SHAPE.CONNECT, `connection shape bonus should be in ord, got ${e!.ord}`);
+});
+
+test('expandMove rewards putting an enemy group in atari (offense)', () => {
+    // O at (1,1) has 2 liberties; playing X (1,2) leaves it with 1 (atari, not captured).
+    const e = expandMove(parseBoard(['.X.', 'XO.', '...']), 1, 2, 'X');
+    assert.ok(e);
+    assert.ok(e!.ord >= TACTIC.ATARI_THREAT, `atari threat should be scored, got ${e!.ord}`);
+});
+
+test('expandMove rewards lifting a weak (2-liberty) own group to safety (defense)', () => {
+    // X (0,0) has 2 liberties; playing X (0,1) raises the group to 3 liberties.
+    const e = expandMove(parseBoard(['X..', '...', '...']), 0, 1, 'X');
+    assert.ok(e);
+    assert.ok(e!.ord >= TACTIC.DEFEND_WEAK, `defense should be scored, got ${e!.ord}`);
 });
 
 // ---------------------------------------------------------------------------
