@@ -9,6 +9,8 @@ import {
     expandMove,
     evaluateBoard,
     selectMove,
+    EVAL,
+    INFLUENCE_MARGIN,
     type Grid,
 } from '../src/utils/go-engine.ts';
 
@@ -63,13 +65,27 @@ test('evaluateBoard credits sealed territory to its owner', () => {
     assert.ok(evaluateBoard(grid) > 0);
 });
 
-test('filling our own enclosed territory is not net-positive', () => {
+test('stone and territory are weighted equally (true area scoring)', () => {
+    assert.equal(EVAL.STONE, EVAL.TERRITORY);
+    assert.equal(INFLUENCE_MARGIN, 2);
+});
+
+test('a symmetric position evaluates to zero', () => {
+    assert.equal(evaluateBoard(parseBoard(['X.O', '...', '...'])), 0);
+    assert.equal(evaluateBoard(parseBoard(['XX...OO', '.......', '.......', '.......', '.......', '.......', '.......'])), 0);
+});
+
+test('a one-colour-enclosed region still counts as territory under the margin', () => {
+    assert.ok(evaluateBoard(parseBoard(['XXXXXXX', 'X.....X', 'X.....X', 'X.....X', 'X.....X', 'X.....X', 'XXXXXXX'])) > 0);
+});
+
+test('filling our own settled territory is not a gain', () => {
     const before = parseBoard(ENCLOSED);
-    const played = playStone(before, 1, 1, 'X'); // deep interior, far from the O
+    const played = playStone(before, 1, 1, 'X');
     assert.ok(played);
     assert.ok(
-        evaluateBoard(played!.grid) < evaluateBoard(before),
-        'filling own territory should shed value',
+        evaluateBoard(played!.grid) <= evaluateBoard(before),
+        'filling own territory must not increase value',
     );
 });
 

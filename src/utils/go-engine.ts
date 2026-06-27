@@ -14,10 +14,14 @@ export const TIE_EPSILON = 0.5; // jitter-preserving slack on the root alpha win
 // Static position-evaluation weights, from black's (our) perspective.
 export const EVAL = {
     STONE: 10,      // per stone on the board (area scoring)
-    TERRITORY: 12,  // per empty point controlled by a single colour
+    TERRITORY: 10,  // per controlled empty point — equal to a stone (true area scoring)
     ATARI: 12,      // per stone in a group with 1 liberty (treat as nearly lost)
     WEAK: 2,        // per stone in a group with 2 liberties (under pressure)
 } as const;
+
+// A point only counts as territory when one colour reaches it at least this many
+// steps sooner than the other — so "territory" means clear control, not noise.
+export const INFLUENCE_MARGIN = 2;
 
 // ---------------------------------------------------------------------------
 // Go rules engine (pure functions over a grid).
@@ -333,8 +337,8 @@ export const evaluateBoard = (grid: Grid): number => {
             if (grid[x][y] !== '.') continue;
             const dx = distX[x][y];
             const dox = distO[x][y];
-            if (dx < dox) value += EVAL.TERRITORY;
-            else if (dox < dx) value -= EVAL.TERRITORY;
+            if (dx + INFLUENCE_MARGIN <= dox) value += EVAL.TERRITORY;
+            else if (dox + INFLUENCE_MARGIN <= dx) value -= EVAL.TERRITORY;
         }
     }
 
