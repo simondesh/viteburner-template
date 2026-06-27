@@ -40,3 +40,47 @@ export const batchRam = (threads: ThreadCounts, costs: ThreadCosts): number =>
     threads.weaken1 * costs.weaken +
     threads.grow * costs.grow +
     threads.weaken2 * costs.weaken;
+
+export interface OpDurations {
+    hackTime: number;
+    growTime: number;
+    weakenTime: number;
+}
+
+export interface AdditionalMsec {
+    hack: number;
+    weaken1: number;
+    grow: number;
+    weaken2: number;
+}
+
+/**
+ * Per-op `additionalMsec` padding so all four ops can be launched together yet
+ * COMPLETE in the order H -> W1 -> G -> W2, each `gapMs` apart. The longest op
+ * sets the baseline landing time; shorter ops wait longer.
+ */
+export const additionalMsecOffsets = (durations: OpDurations, gapMs: number): AdditionalMsec => {
+    const baseLand = Math.max(durations.hackTime, durations.growTime, durations.weakenTime);
+    return {
+        hack: baseLand - durations.hackTime,
+        weaken1: baseLand + gapMs - durations.weakenTime,
+        grow: baseLand + 2 * gapMs - durations.growTime,
+        weaken2: baseLand + 3 * gapMs - durations.weakenTime,
+    };
+};
+
+/**
+ * How many concurrent batches to run: the smaller of what RAM allows and what
+ * the cycle time allows (one batch can start every `batchSpacingMs`).
+ */
+export const batchesThatFit = (
+    poolRamForHacking: number,
+    perBatchRam: number,
+    cycleTimeMs: number,
+    batchSpacingMs: number,
+): number => {
+    if (perBatchRam <= 0 || batchSpacingMs <= 0) return 0;
+    const byRam = Math.floor(poolRamForHacking / perBatchRam);
+    const byTime = Math.floor(cycleTimeMs / batchSpacingMs);
+    return Math.max(0, Math.min(byRam, byTime));
+};

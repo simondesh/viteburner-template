@@ -53,3 +53,48 @@ test('batchRam: sums per-op thread costs (weaken cost used for both weakens)', (
     // 10*1.7 + 5*1.75 + 20*1.75 + 5*1.75 = 17 + 8.75 + 35 + 8.75 = 69.5
     assert.equal(batchRam(threads, costs), 69.5);
 });
+
+import {
+    additionalMsecOffsets,
+    batchesThatFit,
+    type OpDurations,
+} from '../src/utils/hgw-math.ts';
+
+test('additionalMsecOffsets: ops land in order H, W1, G, W2 separated by the gap', () => {
+    const durations: OpDurations = { hackTime: 1000, growTime: 3200, weakenTime: 4000 };
+    const gap = 100;
+    const off = additionalMsecOffsets(durations, gap);
+
+    // Land time = natural duration + additionalMsec.
+    const landHack = durations.hackTime + off.hack;
+    const landWeaken1 = durations.weakenTime + off.weaken1;
+    const landGrow = durations.growTime + off.grow;
+    const landWeaken2 = durations.weakenTime + off.weaken2;
+
+    assert.equal(landWeaken1 - landHack, gap);
+    assert.equal(landGrow - landWeaken1, gap);
+    assert.equal(landWeaken2 - landGrow, gap);
+});
+
+test('additionalMsecOffsets: every offset is non-negative', () => {
+    const off = additionalMsecOffsets({ hackTime: 1000, growTime: 3200, weakenTime: 4000 }, 100);
+    assert.ok(off.hack >= 0);
+    assert.ok(off.weaken1 >= 0);
+    assert.ok(off.grow >= 0);
+    assert.ok(off.weaken2 >= 0);
+});
+
+test('batchesThatFit: limited by whichever of RAM or time is smaller', () => {
+    // byRam = floor(1000/100)=10 ; byTime = floor(4000/400)=10
+    assert.equal(batchesThatFit(1000, 100, 4000, 400), 10);
+    // RAM-limited: floor(450/100)=4
+    assert.equal(batchesThatFit(450, 100, 4000, 400), 4);
+    // time-limited: floor(4000/1000)=4
+    assert.equal(batchesThatFit(1000, 100, 4000, 1000), 4);
+});
+
+test('batchesThatFit: zero on non-positive batch RAM or spacing', () => {
+    assert.equal(batchesThatFit(1000, 0, 4000, 400), 0);
+    assert.equal(batchesThatFit(1000, 100, 4000, 0), 0);
+    assert.equal(batchesThatFit(50, 100, 4000, 400), 0); // cannot fit one batch
+});
