@@ -45,6 +45,9 @@ export async function main(ns: NS) {
         await ns.sleep(1000);
     }
 }
+// The port-opener programs, in the same order obtainrootaccess runs them.
+const PORT_OPENERS = ['BruteSSH.exe', 'FTPCrack.exe', 'relaySMTP.exe', 'HTTPWorm.exe', 'SQLInject.exe'];
+
 async function gettarget(ns: NS): Promise<string> {
     const serverNames = await gethackableserverBFS(ns);
 
@@ -53,9 +56,14 @@ async function gettarget(ns: NS): Promise<string> {
         maxMoney: ns.getServerMaxMoney(name),
         minSecurity: ns.getServerMinSecurityLevel(name),
         requiredHackingLevel: ns.getServerRequiredHackingLevel(name),
+        requiredPorts: ns.getServerNumPortsRequired(name),
+        hasRoot: ns.hasRootAccess(name),
     }));
 
-    return chooseHackTarget(stats, ns.getHackingLevel());
+    // How many port openers we own decides which servers we can actually nuke.
+    const portOpeners = PORT_OPENERS.filter((p) => ns.fileExists(p, 'home')).length;
+
+    return chooseHackTarget(stats, ns.getHackingLevel(), portOpeners);
 }
 
 
