@@ -111,3 +111,18 @@ test('planGame: deep factions use a fixed small board, narrow beam, and deep sea
         { board: 5, rootBranch: 6, nodeBranch: 3, depth: 8, games: 0 },
     );
 });
+
+test('invariant: every deep-depth faction is pinned to a small board + narrow beam, never escalates', () => {
+    // Guards the core property: a faction that searches deeper than the base depth
+    // must use a fixed small board with a narrow beam, even when a stored entry
+    // would escalate an easy faction to 13x13. Catches a future edit that adds a
+    // deep depth but forgets to pin the board/beam (which would route it down the
+    // wide adaptive escalation path).
+    for (const faction of FACTION_LADDER) {
+        if (depthForFaction(faction) > SEARCH_DEPTH) {
+            const plan = planGame(faction, { board: 13, games: 9999 }, 30);
+            assert.ok(plan.board <= 7, `${faction} (depth ${plan.depth}) must stay on a small board, got ${plan.board}`);
+            assert.ok(plan.nodeBranch <= 4, `${faction} must use a narrow beam, got nodeBranch ${plan.nodeBranch}`);
+        }
+    }
+});
