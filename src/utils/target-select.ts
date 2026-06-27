@@ -6,32 +6,41 @@ export interface ServerStat {
     maxMoney: number;
     minSecurity: number;
     requiredHackingLevel: number;
+    /** Number of open ports nuke() needs before it will grant root. */
+    requiredPorts: number;
+    /** Whether we already have root on this server. */
+    hasRoot: boolean;
 }
 
 /**
- * Pick the best server to farm, given our current hacking level.
+ * Pick the best server to farm, given our current hacking level and how many
+ * port-opener programs we own.
  *
- * Hard rule first: a server whose required hacking level exceeds ours is
- * unhackable, so it is never a candidate no matter how much money it holds.
- * (The previous scoring only *penalised* the level gap, so a rich high-level
- * server could still win — which is why the bot kept targeting servers it
- * could not actually hack.)
+ * Two hard rules first, because a server that fails either is useless no matter
+ * how rich it is:
+ *   1. Its required hacking level must not exceed ours.
+ *   2. We must be able to root it *now* — either we already have root, or we own
+ *      at least as many port openers as it requires. Without this the bot would
+ *      keep picking a rich server it cannot nuke, the controller's root gate
+ *      would skip every cycle, and nothing would ever get hacked.
  *
- * Among the reachable, worth-hacking servers, prefer the best money-to-security
- * ratio: the most money for the least weakening/growing effort.
+ * Among the servers that pass, prefer the best money-to-security ratio: the most
+ * money for the least weakening/growing effort.
  */
 export const chooseHackTarget = (
     servers: ServerStat[],
     hackingLevel: number,
+    portOpeners: number,
     fallback = 'n00dles',
 ): string => {
     let best = fallback;
     let bestScore = -Infinity;
 
     for (const server of servers) {
-        if (server.requiredHackingLevel > hackingLevel) continue; // out of reach
-        if (server.maxMoney <= 0) continue;                       // nothing to take
-        if (server.minSecurity <= 0) continue;                    // guard divide-by-zero
+        if (server.requiredHackingLevel > hackingLevel) continue;        // out of reach
+        if (!server.hasRoot && server.requiredPorts > portOpeners) continue; // can't root yet
+        if (server.maxMoney <= 0) continue;                              // nothing to take
+        if (server.minSecurity <= 0) continue;                          // guard divide-by-zero
 
         const score = server.maxMoney / server.minSecurity;
         if (score > bestScore) {
