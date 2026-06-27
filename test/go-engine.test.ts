@@ -79,6 +79,12 @@ test('a one-colour-enclosed region still counts as territory under the margin', 
     assert.ok(evaluateBoard(parseBoard(['XXXXXXX', 'X.....X', 'X.....X', 'X.....X', 'X.....X', 'X.....X', 'XXXXXXX'])) > 0);
 });
 
+test('an empty board is neutral (cells unreachable by both colours count for nobody)', () => {
+    // Guards the Infinity edge: a cell with distX == distO == Infinity must NOT be
+    // credited to X (Infinity + margin <= Infinity would otherwise be true).
+    assert.equal(evaluateBoard(parseBoard(['...', '...', '...'])), 0);
+});
+
 test('filling our own settled territory is not a gain', () => {
     const before = parseBoard(ENCLOSED);
     const played = playStone(before, 1, 1, 'X');

@@ -337,8 +337,8 @@ export const evaluateBoard = (grid: Grid): number => {
             if (grid[x][y] !== '.') continue;
             const dx = distX[x][y];
             const dox = distO[x][y];
-            if (dx + INFLUENCE_MARGIN <= dox) value += EVAL.TERRITORY;
-            else if (dox + INFLUENCE_MARGIN <= dx) value -= EVAL.TERRITORY;
+            if (isFinite(dx) && dx + INFLUENCE_MARGIN <= dox) value += EVAL.TERRITORY;
+            else if (isFinite(dox) && dox + INFLUENCE_MARGIN <= dx) value -= EVAL.TERRITORY;
         }
     }
 
