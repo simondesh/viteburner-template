@@ -46,7 +46,7 @@ The IPvGO bot (`src/utils/go.ts` + `src/utils/go-engine.ts`) has three weaknesse
 | Faction advance | **Win-streak based:** advance once `highestWinStreak >= STREAK_TARGET` (default **10**). |
 | Faction order | Netburners → Slum Snakes → The Black Hand → Tetrads → Daedalus → Illuminati → "????????????". |
 | Board sizing | **Adaptive, smallest-first:** *every* faction (including the hardest) starts at 5×5; escalate to the next size (5 → 7 → 9 → 13) after `ESCALATE_AFTER_GAMES` games on the current board without reaching the streak. 13×13 is the ceiling. |
-| Progression state | Faction choice is **derived from `ns.go.getStats()`** (persists across restarts). Per-faction *board* progress is tracked in a small JSON state file on home (`go-progress.txt`), because `getStats()` does not break results down by board size. |
+| Progression state | Faction choice is **derived from `ns.go.analysis.getStats()`** (persists across restarts). Per-faction *board* progress is tracked in a small JSON state file on home (`go-progress.txt`), because `getStats()` does not break results down by board size. |
 
 ### Board-scaled branch widths
 
@@ -75,7 +75,7 @@ Pure-core / thin-shell split, consistent with the rest of the codebase.
 
 1. Read and parse `go-progress.txt` → a per-faction `{ board, games }` map (`{}` if missing
    or unparseable).
-2. `stats = ns.go.getStats()`; `faction = chooseFaction(stats, STREAK_TARGET)` — first faction
+2. `stats = ns.go.analysis.getStats()`; `faction = chooseFaction(stats, STREAK_TARGET)` — first faction
    in the ladder whose `highestWinStreak < STREAK_TARGET`; if all are cleared, the last
    (hardest) faction, which we then keep farming for ongoing streak rep.
 3. `{ board, games } = resolveBoard(progress[faction], ESCALATE_AFTER_GAMES)` — applies any

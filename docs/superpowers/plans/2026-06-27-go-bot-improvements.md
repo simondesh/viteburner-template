@@ -4,7 +4,7 @@
 
 **Goal:** Make the IPvGO bot climb factions easiest-first to a 10-win streak (smallest board first, escalating when stuck), evaluate after the opponent's reply (even depth 4), and search broadly on small boards without forward-pruning tactics — affordably, via root-alpha + lazy move ordering.
 
-**Architecture:** A new pure `go-ladder.ts` holds the faction/board/branch/depth policy. `go-engine.ts` gains a `nodeBranch` parameter, root-alpha threading in `selectMove`, and a lazy two-phase move ordering (cheap rank → expand only the beam). `go.ts` (thin NS shell) reads `ns.go.getStats()` + a small `go-progress.txt`, picks faction/board/branch each game, and plays at depth 4.
+**Architecture:** A new pure `go-ladder.ts` holds the faction/board/branch/depth policy. `go-engine.ts` gains a `nodeBranch` parameter, root-alpha threading in `selectMove`, and a lazy two-phase move ordering (cheap rank → expand only the beam). `go.ts` (thin NS shell) reads `ns.go.analysis.getStats()` + a small `go-progress.txt`, picks faction/board/branch each game, and plays at depth 4.
 
 **Tech Stack:** TypeScript, Bitburner (modded) NS API, viteburner, Node 26 `node --test`.
 
@@ -16,7 +16,7 @@
 - `STREAK_TARGET = 10`; `ESCALATE_AFTER_GAMES = 30`.
 - Faction ladder order: `Netburners`, `Slum Snakes`, `The Black Hand`, `Tetrads`, `Daedalus`, `Illuminati`, `????????????`.
 - Board sizes: `5 | 7 | 9 | 13`. Branch widths by board: 5 → {root 25, node 25}; 7 → {25, 16}; 9 → {16, 10}; 13 → {12, 6}.
-- Faction choice derives from `ns.go.getStats()` (persists across restarts); per-faction board progress persists in `go-progress.txt` on home.
+- Faction choice derives from `ns.go.analysis.getStats()` (persists across restarts); per-faction board progress persists in `go-progress.txt` on home.
 - Commit after every task. Work on branch `feat/go-bot-improvements` (already checked out); do NOT create a new branch.
 
 ---
@@ -722,7 +722,7 @@ export async function main(ns: NS) {
 
     while (!ns.fileExists(STOP_FILE, 'home')) {
         const progress = readProgress(ns);
-        const stats = ns.go.getStats();
+        const stats = ns.go.analysis.getStats();
         const faction = chooseFaction(stats, STREAK_TARGET);
         const { board, games } = resolveBoard(progress[faction], ESCALATE_AFTER_GAMES);
         const { rootBranch, nodeBranch } = branchForBoard(board);
@@ -785,7 +785,7 @@ const writeProgress = (ns: NS, progress: ProgressMap) => {
 
 /** Log the finished game using the faction's persistent stats from getStats(). */
 const logGameResult = (ns: NS, faction: GoFaction, board: number) => {
-    const s = ns.go.getStats()[faction];
+    const s = ns.go.analysis.getStats()[faction];
     if (!s) return;
     ns.print(
         `${faction} ${board}x${board} | W:${s.wins} L:${s.losses} ` +
@@ -797,7 +797,7 @@ const logGameResult = (ns: NS, faction: GoFaction, board: number) => {
 - [ ] **Step 2: Type-check**
 
 Run: `npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E "utils/go.ts|go-ladder" || echo "driver clean"`
-Expected: `driver clean`. If tsc reports that `ns.go.getStats()` is not assignable to `chooseFaction`'s parameter, add a minimal cast at the call site (`chooseFaction(stats as Partial<Record<string, { highestWinStreak: number }>>, STREAK_TARGET)`) and note it in the report; do not change `go-ladder.ts`.
+Expected: `driver clean`. If tsc reports that `ns.go.analysis.getStats()` is not assignable to `chooseFaction`'s parameter, add a minimal cast at the call site (`chooseFaction(stats as Partial<Record<string, { highestWinStreak: number }>>, STREAK_TARGET)`) and note it in the report; do not change `go-ladder.ts`.
 
 - [ ] **Step 3: Verify the full pure suite still passes**
 

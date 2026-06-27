@@ -22,7 +22,7 @@ export async function main(ns: NS) {
 
     while (!ns.fileExists(STOP_FILE, 'home')) {
         const progress = readProgress(ns);
-        const stats = ns.go.getStats();
+        const stats = ns.go.analysis.getStats();
         const faction = chooseFaction(stats, STREAK_TARGET);
         const { board, games } = resolveBoard(progress[faction], ESCALATE_AFTER_GAMES);
         const { rootBranch, nodeBranch } = branchForBoard(board);
@@ -83,9 +83,9 @@ const writeProgress = (ns: NS, progress: ProgressMap) => {
     ns.write(PROGRESS_FILE, JSON.stringify(progress), 'w');
 };
 
-/** Log the finished game using the faction's persistent stats from getStats(). */
+/** Log the finished game using the faction's persistent stats from analysis.getStats(). */
 const logGameResult = (ns: NS, faction: GoFaction, board: number) => {
-    const s = ns.go.getStats()[faction];
+    const s = ns.go.analysis.getStats()[faction];
     if (!s) return;
     ns.print(
         `${faction} ${board}x${board} | W:${s.wins} L:${s.losses} ` +
