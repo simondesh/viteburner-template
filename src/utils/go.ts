@@ -3,12 +3,10 @@ import { Grid, selectMove } from './go-engine';
 import {
     GoFaction,
     BoardProgress,
-    SEARCH_DEPTH,
-    STREAK_TARGET,
+    GAMES_PER_FACTION,
     ESCALATE_AFTER_GAMES,
     chooseFaction,
-    resolveBoard,
-    branchForBoard,
+    planGame,
 } from './go-ladder';
 
 const STOP_FILE = 'go-stop.txt';
@@ -23,9 +21,12 @@ export async function main(ns: NS) {
     while (!ns.fileExists(STOP_FILE, 'home')) {
         const progress = readProgress(ns);
         const stats = ns.go.analysis.getStats();
-        const faction = chooseFaction(stats, STREAK_TARGET);
-        const { board, games } = resolveBoard(progress[faction], ESCALATE_AFTER_GAMES);
-        const { rootBranch, nodeBranch } = branchForBoard(board);
+        const faction = chooseFaction(stats, GAMES_PER_FACTION);
+        const { board, rootBranch, nodeBranch, depth, games } = planGame(
+            faction,
+            progress[faction],
+            ESCALATE_AFTER_GAMES,
+        );
 
         const started = ns.go.resetBoardState(faction, board);
         if (!started) {
@@ -36,7 +37,7 @@ export async function main(ns: NS) {
 
         let result;
         do {
-            const move = chooseMove(ns, rootBranch, nodeBranch);
+            const move = chooseMove(ns, depth, rootBranch, nodeBranch);
             if (move) result = await ns.go.makeMove(move[0], move[1]);
             else result = await ns.go.passTurn();
             await ns.go.opponentNextTurn();
@@ -44,7 +45,7 @@ export async function main(ns: NS) {
 
         progress[faction] = { board, games: games + 1 };
         writeProgress(ns, progress);
-        logGameResult(ns, faction, board);
+        logGameResult(ns, faction, board, depth);
     }
 
     ns.tprint(`Go grinder stopped (found /${STOP_FILE}).`);
@@ -52,9 +53,14 @@ export async function main(ns: NS) {
 
 /**
  * Pick our move by mirroring the live board into a mutable grid and handing it to
- * the engine's bounded alpha-beta search at the configured depth/branch widths.
+ * the engine's bounded alpha-beta search at the faction's depth/branch widths.
  */
-const chooseMove = (ns: NS, rootBranch: number, nodeBranch: number): [number, number] | null => {
+const chooseMove = (
+    ns: NS,
+    depth: number,
+    rootBranch: number,
+    nodeBranch: number,
+): [number, number] | null => {
     const board = ns.go.getBoardState();
     const valid = ns.go.analysis.getValidMoves();
     const size = board[0].length;
@@ -66,7 +72,7 @@ const chooseMove = (ns: NS, rootBranch: number, nodeBranch: number): [number, nu
         grid.push(col);
     }
 
-    return selectMove(grid, valid, SEARCH_DEPTH, rootBranch, nodeBranch);
+    return selectMove(grid, valid, depth, rootBranch, nodeBranch);
 };
 
 const readProgress = (ns: NS): ProgressMap => {
@@ -84,11 +90,12 @@ const writeProgress = (ns: NS, progress: ProgressMap) => {
 };
 
 /** Log the finished game using the faction's persistent stats from analysis.getStats(). */
-const logGameResult = (ns: NS, faction: GoFaction, board: number) => {
+const logGameResult = (ns: NS, faction: GoFaction, board: number, depth: number) => {
     const s = ns.go.analysis.getStats()[faction];
     if (!s) return;
+    const games = s.wins + s.losses;
     ns.print(
-        `${faction} ${board}x${board} | W:${s.wins} L:${s.losses} ` +
-        `streak:${s.winStreak} (best ${s.highestWinStreak}/${STREAK_TARGET}) bonus:${s.bonusPercent}%`,
+        `${faction} ${board}x${board} d${depth} | W:${s.wins} L:${s.losses} ` +
+        `games:${games}/${GAMES_PER_FACTION} streak:${s.winStreak} bonus:${s.bonusPercent}%`,
     );
 };
