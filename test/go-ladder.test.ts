@@ -41,9 +41,9 @@ test('chooseFaction does not advance before the games target is reached', () => 
     assert.equal(chooseFaction(stats, 100), 'Netburners');
 });
 
-test('chooseFaction returns the hardest faction once all are played out', () => {
+test('chooseFaction returns the last faction in the ladder once all are played out', () => {
     const stats = Object.fromEntries(FACTION_LADDER.map((f) => [f, stat(50, 50)]));
-    assert.equal(chooseFaction(stats, 100), '????????????');
+    assert.equal(chooseFaction(stats, 100), FACTION_LADDER[FACTION_LADDER.length - 1]);
 });
 
 test('depthForFaction deepens for harder factions and is always even', () => {

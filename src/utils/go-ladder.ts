@@ -31,7 +31,7 @@ export const FACTION_LADDER: GoFaction[] = [
     'Tetrads',
     'Daedalus',
     'Illuminati',
-    '????????????',
+    //'????????????',
 ];
 
 export const SEARCH_DEPTH = 4;        // base (even) depth; harder factions go deeper
