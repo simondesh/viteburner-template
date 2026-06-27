@@ -12,9 +12,10 @@ export type GoFaction =
 
 export type BoardSize = 5 | 7 | 9 | 13;
 
-/** The single stat we use to decide whether a faction is "cleared". */
+/** Stats used for progression: a faction is "played out" after wins + losses games. */
 export interface FactionStat {
-    highestWinStreak: number;
+    wins: number;
+    losses: number;
 }
 
 /** Per-faction board progress, persisted by the driver. */
@@ -41,8 +42,8 @@ export const FACTION_LADDER: GoFaction[] = [
 
 export const BOARD_SIZES: BoardSize[] = [5, 7, 9, 13];
 
-export const SEARCH_DEPTH = 4;        // even -> horizon ends on the opponent's reply
-export const STREAK_TARGET = 10;      // win streak that "clears" a faction
+export const SEARCH_DEPTH = 4;          // base (even) depth; harder factions go deeper
+export const GAMES_PER_FACTION = 100;   // games (wins+losses) before advancing a faction
 export const ESCALATE_AFTER_GAMES = 30; // games on a board before stepping up a size
 
 // Wide on small boards (search broadly, never prune a tactic); narrow only where
@@ -60,14 +61,15 @@ export const branchForBoard = (size: BoardSize): BranchWidths => {
     }
 };
 
-/** First faction not yet cleared (highestWinStreak < target); if all are cleared, the last. */
+/** First faction not yet played to the games target; if all are, the last (hardest). */
 export const chooseFaction = (
     stats: Partial<Record<string, FactionStat>>,
-    streakTarget: number,
+    gamesTarget: number,
 ): GoFaction => {
     for (const faction of FACTION_LADDER) {
-        const streak = stats[faction]?.highestWinStreak ?? 0;
-        if (streak < streakTarget) return faction;
+        const s = stats[faction];
+        const games = s ? s.wins + s.losses : 0;
+        if (games < gamesTarget) return faction;
     }
     return FACTION_LADDER[FACTION_LADDER.length - 1];
 };
@@ -96,4 +98,60 @@ export const resolveBoard = (
         games = 0;
     }
     return { board, games };
+};
+
+/** Search depth by faction difficulty (always even). Harder factions search deeper. */
+export const depthForFaction = (faction: GoFaction): number => {
+    if (faction === '????????????') return 8;
+    if (faction === 'Daedalus' || faction === 'Illuminati') return 6;
+    return SEARCH_DEPTH;
+};
+
+interface DeepProfile {
+    board: BoardSize;
+    rootBranch: number;
+    nodeBranch: number;
+}
+
+// Deep-search factions are pinned to a small board with a narrow beam so the
+// deeper search stays affordable (cost grows as beam^depth).
+const DEEP_PROFILES: Partial<Record<GoFaction, DeepProfile>> = {
+    Daedalus: { board: 7, rootBranch: 8, nodeBranch: 4 },
+    Illuminati: { board: 7, rootBranch: 8, nodeBranch: 4 },
+    '????????????': { board: 5, rootBranch: 6, nodeBranch: 3 },
+};
+
+export interface GamePlan {
+    board: BoardSize;
+    rootBranch: number;
+    nodeBranch: number;
+    depth: number;
+    games: number;
+}
+
+/**
+ * Resolve the full per-game plan for a faction. Deep factions use a fixed small
+ * board + narrow beam (board escalation does not apply); easy factions use the
+ * smallest-first escalation and wide beams. `games` is the board-progress counter
+ * to persist (passed through unchanged for deep factions).
+ */
+export const planGame = (
+    faction: GoFaction,
+    entry: BoardProgress | undefined,
+    escalateAfter: number,
+): GamePlan => {
+    const depth = depthForFaction(faction);
+    const deep = DEEP_PROFILES[faction];
+    if (deep) {
+        return {
+            board: deep.board,
+            rootBranch: deep.rootBranch,
+            nodeBranch: deep.nodeBranch,
+            depth,
+            games: entry?.games ?? 0,
+        };
+    }
+    const { board, games } = resolveBoard(entry, escalateAfter);
+    const { rootBranch, nodeBranch } = branchForBoard(board);
+    return { board, rootBranch, nodeBranch, depth, games };
 };

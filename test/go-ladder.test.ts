@@ -3,32 +3,53 @@ import assert from 'node:assert/strict';
 import {
     FACTION_LADDER,
     SEARCH_DEPTH,
+    GAMES_PER_FACTION,
     branchForBoard,
     chooseFaction,
+    depthForFaction,
     nextBoard,
     resolveBoard,
+    planGame,
     type FactionStat,
 } from '../src/utils/go-ladder.ts';
 
-const stat = (highestWinStreak: number): FactionStat => ({ highestWinStreak });
+const stat = (wins: number, losses: number): FactionStat => ({ wins, losses });
 
-test('SEARCH_DEPTH is even so the search horizon ends on the opponent reply', () => {
+test('SEARCH_DEPTH (base depth) is even and 4', () => {
     assert.equal(SEARCH_DEPTH % 2, 0);
     assert.equal(SEARCH_DEPTH, 4);
 });
 
+test('GAMES_PER_FACTION is 100', () => {
+    assert.equal(GAMES_PER_FACTION, 100);
+});
+
 test('chooseFaction starts at the easiest faction when there are no stats', () => {
-    assert.equal(chooseFaction({}, 10), 'Netburners');
+    assert.equal(chooseFaction({}, GAMES_PER_FACTION), 'Netburners');
 });
 
-test('chooseFaction skips factions that already reached the streak target', () => {
-    const stats = { Netburners: stat(10), 'Slum Snakes': stat(3) };
-    assert.equal(chooseFaction(stats, 10), 'Slum Snakes');
+test('chooseFaction advances once a faction has been played the target number of games', () => {
+    const stats = { Netburners: stat(40, 60), 'Slum Snakes': stat(10, 5) }; // Netburners = 100 games
+    assert.equal(chooseFaction(stats, 100), 'Slum Snakes');
 });
 
-test('chooseFaction returns the hardest faction once all are cleared', () => {
-    const stats = Object.fromEntries(FACTION_LADDER.map((f) => [f, stat(10)]));
-    assert.equal(chooseFaction(stats, 10), '????????????');
+test('chooseFaction does not advance before the games target is reached', () => {
+    const stats = { Netburners: stat(40, 59) }; // 99 games
+    assert.equal(chooseFaction(stats, 100), 'Netburners');
+});
+
+test('chooseFaction returns the hardest faction once all are played out', () => {
+    const stats = Object.fromEntries(FACTION_LADDER.map((f) => [f, stat(50, 50)]));
+    assert.equal(chooseFaction(stats, 100), '????????????');
+});
+
+test('depthForFaction deepens for harder factions and is always even', () => {
+    assert.equal(depthForFaction('Netburners'), 4);
+    assert.equal(depthForFaction('Tetrads'), 4);
+    assert.equal(depthForFaction('Daedalus'), 6);
+    assert.equal(depthForFaction('Illuminati'), 6);
+    assert.equal(depthForFaction('????????????'), 8);
+    for (const f of FACTION_LADDER) assert.equal(depthForFaction(f) % 2, 0);
 });
 
 test('nextBoard steps up and caps at 13', () => {
@@ -59,4 +80,34 @@ test('branchForBoard is wide on small boards and narrow on big ones', () => {
     assert.deepEqual(branchForBoard(7), { rootBranch: 25, nodeBranch: 16 });
     assert.deepEqual(branchForBoard(9), { rootBranch: 16, nodeBranch: 10 });
     assert.deepEqual(branchForBoard(13), { rootBranch: 12, nodeBranch: 6 });
+});
+
+test('planGame: an easy faction uses adaptive board + wide beam + depth 4', () => {
+    assert.deepEqual(
+        planGame('Netburners', undefined, 30),
+        { board: 5, rootBranch: 25, nodeBranch: 25, depth: 4, games: 0 },
+    );
+});
+
+test('planGame: an easy faction escalates its board per resolveBoard', () => {
+    assert.deepEqual(
+        planGame('Netburners', { board: 5, games: 30 }, 30),
+        { board: 7, rootBranch: 25, nodeBranch: 16, depth: 4, games: 0 },
+    );
+});
+
+test('planGame: deep factions use a fixed small board, narrow beam, and deep search', () => {
+    assert.deepEqual(
+        planGame('Daedalus', undefined, 30),
+        { board: 7, rootBranch: 8, nodeBranch: 4, depth: 6, games: 0 },
+    );
+    // Illuminati ignores any stored board/escalation; games is passed through.
+    assert.deepEqual(
+        planGame('Illuminati', { board: 5, games: 999 }, 30),
+        { board: 7, rootBranch: 8, nodeBranch: 4, depth: 6, games: 999 },
+    );
+    assert.deepEqual(
+        planGame('????????????', undefined, 30),
+        { board: 5, rootBranch: 6, nodeBranch: 3, depth: 8, games: 0 },
+    );
 });
