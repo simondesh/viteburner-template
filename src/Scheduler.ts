@@ -12,7 +12,7 @@ import {
     additionalMsecOffsets,
     batchesThatFit,
 } from './utils/hgw-math';
-import { ServerRam, OpRequest, planOps, totalCapacity } from './utils/ram-pool';
+import { ServerRam, OpRequest, placeThreads, planOps, totalCapacity } from './utils/ram-pool';
 
 // ---- Tunables -------------------------------------------------------------
 const HOME_RESERVE_GB = 32;   // RAM kept free on home for scheduler/go/start
@@ -53,9 +53,7 @@ export async function main(ns: NS) {
         const pool = buildPool(ns, rooted);
         const target = pickTarget(ns, rooted);
 
-        if (target) {
-            scheduleTarget(ns, pool, target);
-        }
+        scheduleTarget(ns, pool, target);
 
         if (SHARE_ENABLED) fillShare(ns, pool);
 
@@ -179,23 +177,41 @@ function prep(
     const c = costs(ns);
     const d = durations(ns, target);
     const weakenPer = ns.weakenAnalyze(1);
-
-    const wToMin = weakenThreadsForSecurity(curSec - minSec, weakenPer);
-    const mult = growMultiplier(curMoney, maxMoney);
-    const gThreads = mult > 1 ? Math.ceil(ns.growthAnalyze(target, mult)) : 0;
-    const growSec = securityIncrease(gThreads, ns.growthAnalyzeSecurity(1));
-    const wCover = weakenThreadsForSecurity(growSec, weakenPer);
-
-    // Land order: weaken-to-min, then grow, then weaken-to-cover-grow.
     const off = additionalMsecOffsets(d, PREP_GAP_MS);
-    const ops: OpRequest[] = [
-        { key: 'weaken1', perThreadCost: c.weaken, threads: wToMin },
-        { key: 'grow', perThreadCost: c.grow, threads: gThreads },
-        { key: 'weaken2', perThreadCost: c.weaken, threads: wCover },
-    ];
-    const plan = planOps(pool, ops);
-    if (!plan) return; // not enough RAM this tick; share fills the rest
-    launchPlan(ns, pool, plan, target, off, 0, { weaken1: WEAKEN, grow: GROW, weaken2: WEAKEN });
+
+    // Priority 1: weaken toward min security.
+    const wToMin = weakenThreadsForSecurity(curSec - minSec, weakenPer);
+    placeOpBestEffort(ns, pool, WEAKEN, c.weaken, wToMin, target, off.weaken1);
+
+    // Priority 2: grow toward max money with whatever RAM remains.
+    const mult = growMultiplier(curMoney, maxMoney);
+    const gDesired = mult > 1 ? Math.ceil(ns.growthAnalyze(target, mult)) : 0;
+    const gPlaced = placeOpBestEffort(ns, pool, GROW, c.grow, gDesired, target, off.grow);
+
+    // Priority 3: cover-weaken sized to the grow threads ACTUALLY placed this tick.
+    const growSec = securityIncrease(gPlaced, ns.growthAnalyzeSecurity(1));
+    const wCover = weakenThreadsForSecurity(growSec, weakenPer);
+    placeOpBestEffort(ns, pool, WEAKEN, c.weaken, wCover, target, off.weaken2);
+}
+
+/** Place up to `desiredThreads` of one op across the pool (as many as fit),
+ *  exec them with the timing offset, debit the pool, and return how many ran. */
+function placeOpBestEffort(
+    ns: NS, pool: ServerRam[], script: string, costPerThread: number,
+    desiredThreads: number, target: string, addlMsec: number,
+): number {
+    if (desiredThreads <= 0) return 0;
+    const n = Math.min(desiredThreads, totalCapacity(pool, costPerThread));
+    if (n <= 0) return 0;
+    const placements = placeThreads(pool, costPerThread, n);
+    if (!placements) return 0;
+    for (const p of placements) {
+        const pid = ns.exec(script, p.server, p.threads, target, Math.round(addlMsec));
+        if (pid === 0) ns.print(`WARN exec failed: ${script} x${p.threads} on ${p.server}`);
+        const entry = pool.find((s) => s.server === p.server);
+        if (entry) entry.freeRam -= p.threads * costPerThread;
+    }
+    return n;
 }
 
 function harvest(ns: NS, pool: ServerRam[], target: string) {

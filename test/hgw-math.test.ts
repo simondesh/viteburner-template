@@ -6,8 +6,11 @@ import {
     weakenThreadsForSecurity,
     securityIncrease,
     batchRam,
+    additionalMsecOffsets,
+    batchesThatFit,
     type ThreadCounts,
     type ThreadCosts,
+    type OpDurations,
 } from '../src/utils/hgw-math.ts';
 
 test('hackThreadsForGreed: threads to steal the requested fraction, rounded up', () => {
@@ -53,12 +56,6 @@ test('batchRam: sums per-op thread costs (weaken cost used for both weakens)', (
     // 10*1.7 + 5*1.75 + 20*1.75 + 5*1.75 = 17 + 8.75 + 35 + 8.75 = 69.5
     assert.equal(batchRam(threads, costs), 69.5);
 });
-
-import {
-    additionalMsecOffsets,
-    batchesThatFit,
-    type OpDurations,
-} from '../src/utils/hgw-math.ts';
 
 test('additionalMsecOffsets: ops land in order H, W1, G, W2 separated by the gap', () => {
     const durations: OpDurations = { hackTime: 1000, growTime: 3200, weakenTime: 4000 };
