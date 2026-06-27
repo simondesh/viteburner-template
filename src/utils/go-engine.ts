@@ -340,8 +340,11 @@ export const expandMove = (
     // Defense: this move lifted a weak (2-liberty) own group to safety.
     if (weakOwn > 0 && own.liberties > 2) ord += TACTIC.DEFEND_WEAK;
 
-    // Offense: any adjacent enemy group left in atari (1 liberty, not captured).
+    // Offense: a one-shot bonus if this move leaves any adjacent enemy group in
+    // atari (1 liberty, not captured). One-shot — not per group — so it stays
+    // below the capture tier even on a double-atari.
     const atariSeen = new Set<string>();
+    let atariThreat = false;
     for (const [dx, dy] of DIRS) {
         const nx = x + dx;
         const ny = y + dy;
@@ -349,8 +352,9 @@ export const expandMove = (
         if (played.grid[nx][ny] !== enemy || atariSeen.has(`${nx},${ny}`)) continue;
         const g = groupAt(played.grid, nx, ny);
         for (const [cx, cy] of g.cells) atariSeen.add(`${cx},${cy}`);
-        if (g.liberties === 1) ord += TACTIC.ATARI_THREAT;
+        if (g.liberties === 1) atariThreat = true;
     }
+    if (atariThreat) ord += TACTIC.ATARI_THREAT;
 
     return { grid: played.grid, ord };
 };
