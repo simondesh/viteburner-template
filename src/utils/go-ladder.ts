@@ -1,4 +1,4 @@
-// Pure faction-ladder + board/search policy for the Go grinder. No NS dependency,
+// Pure faction-ladder + search policy for the Go grinder. No NS dependency,
 // so it can be unit-tested in isolation (see go-ladder.test.ts).
 
 export type GoFaction =
@@ -18,12 +18,6 @@ export interface FactionStat {
     losses: number;
 }
 
-/** Per-faction board progress, persisted by the driver. */
-export interface BoardProgress {
-    board: BoardSize;
-    games: number;
-}
-
 export interface BranchWidths {
     rootBranch: number;
     nodeBranch: number;
@@ -40,14 +34,12 @@ export const FACTION_LADDER: GoFaction[] = [
     '????????????',
 ];
 
-export const BOARD_SIZES: BoardSize[] = [5, 7, 9, 13];
+export const SEARCH_DEPTH = 4;        // base (even) depth; harder factions go deeper
+export const GAMES_PER_FACTION = 50; // games (wins+losses) before advancing a faction
+export const FIXED_BOARD: BoardSize = 7; // every faction plays on a 7x7 board
 
-export const SEARCH_DEPTH = 4;          // base (even) depth; harder factions go deeper
-export const GAMES_PER_FACTION = 100;   // games (wins+losses) before advancing a faction
-export const ESCALATE_AFTER_GAMES = 30; // games on a board before stepping up a size
-
-// Wide on small boards (search broadly, never prune a tactic); narrow only where
-// breadth is genuinely unaffordable.
+// Beam widths by board size. Wide on small boards (search broadly, never prune a
+// tactic); narrow only where breadth is genuinely unaffordable.
 export const branchForBoard = (size: BoardSize): BranchWidths => {
     switch (size) {
         case 5:
@@ -74,32 +66,6 @@ export const chooseFaction = (
     return FACTION_LADDER[FACTION_LADDER.length - 1];
 };
 
-/** The next board size up, capped at the largest. */
-export const nextBoard = (size: BoardSize): BoardSize => {
-    const i = BOARD_SIZES.indexOf(size);
-    if (i < 0) return BOARD_SIZES[0];
-    return BOARD_SIZES[Math.min(i + 1, BOARD_SIZES.length - 1)];
-};
-
-/**
- * Resolve the board to play given stored progress, applying a pending escalation:
- * once `games` reaches the patience budget on a non-max board, step up and reset
- * the counter. A missing entry starts the faction at the smallest board.
- */
-export const resolveBoard = (
-    entry: BoardProgress | undefined,
-    escalateAfter: number,
-): BoardProgress => {
-    let board: BoardSize = entry?.board ?? BOARD_SIZES[0];
-    let games = entry?.games ?? 0;
-    const maxBoard = BOARD_SIZES[BOARD_SIZES.length - 1];
-    if (escalateAfter > 0 && games >= escalateAfter && board !== maxBoard) {
-        board = nextBoard(board);
-        games = 0;
-    }
-    return { board, games };
-};
-
 /** Search depth by faction difficulty (always even). Harder factions search deeper. */
 export const depthForFaction = (faction: GoFaction): number => {
     if (faction === '????????????') return 8;
@@ -107,18 +73,12 @@ export const depthForFaction = (faction: GoFaction): number => {
     return SEARCH_DEPTH;
 };
 
-interface DeepProfile {
-    board: BoardSize;
-    rootBranch: number;
-    nodeBranch: number;
-}
-
-// Deep-search factions are pinned to a small board with a narrow beam so the
-// deeper search stays affordable (cost grows as beam^depth).
-const DEEP_PROFILES: Partial<Record<GoFaction, DeepProfile>> = {
-    Daedalus: { board: 7, rootBranch: 8, nodeBranch: 4 },
-    Illuminati: { board: 7, rootBranch: 8, nodeBranch: 4 },
-    '????????????': { board: 5, rootBranch: 6, nodeBranch: 3 },
+// Deep-search factions use a narrow beam so the deeper search stays affordable
+// (cost grows as beam^depth). Easy factions fall back to the wide 7x7 beam.
+const DEEP_BEAMS: Partial<Record<GoFaction, BranchWidths>> = {
+    Daedalus: { rootBranch: 8, nodeBranch: 4 },
+    Illuminati: { rootBranch: 8, nodeBranch: 4 },
+    '????????????': { rootBranch: 6, nodeBranch: 3 },
 };
 
 export interface GamePlan {
@@ -126,32 +86,15 @@ export interface GamePlan {
     rootBranch: number;
     nodeBranch: number;
     depth: number;
-    games: number;
 }
 
 /**
- * Resolve the full per-game plan for a faction. Deep factions use a fixed small
- * board + narrow beam (board escalation does not apply); easy factions use the
- * smallest-first escalation and wide beams. `games` is the board-progress counter
- * to persist (passed through unchanged for deep factions).
+ * Resolve the per-game plan for a faction: always the fixed 7x7 board, the
+ * faction's search depth, and a beam that is narrow for deep factions and wide
+ * for the easy ones.
  */
-export const planGame = (
-    faction: GoFaction,
-    entry: BoardProgress | undefined,
-    escalateAfter: number,
-): GamePlan => {
+export const planGame = (faction: GoFaction): GamePlan => {
     const depth = depthForFaction(faction);
-    const deep = DEEP_PROFILES[faction];
-    if (deep) {
-        return {
-            board: deep.board,
-            rootBranch: deep.rootBranch,
-            nodeBranch: deep.nodeBranch,
-            depth,
-            games: entry?.games ?? 0,
-        };
-    }
-    const { board, games } = resolveBoard(entry, escalateAfter);
-    const { rootBranch, nodeBranch } = branchForBoard(board);
-    return { board, rootBranch, nodeBranch, depth, games };
+    const { rootBranch, nodeBranch } = DEEP_BEAMS[faction] ?? branchForBoard(FIXED_BOARD);
+    return { board: FIXED_BOARD, rootBranch, nodeBranch, depth };
 };

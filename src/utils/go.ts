@@ -2,31 +2,21 @@ import { NS } from '@ns';
 import { Grid, selectMove } from './go-engine';
 import {
     GoFaction,
-    BoardProgress,
     GAMES_PER_FACTION,
-    ESCALATE_AFTER_GAMES,
     chooseFaction,
     planGame,
 } from './go-ladder';
 
 const STOP_FILE = 'go-stop.txt';
-const PROGRESS_FILE = 'go-progress.txt';
-
-type ProgressMap = Partial<Record<GoFaction, BoardProgress>>;
 
 /** @param {NS} ns */
 export async function main(ns: NS) {
     ns.disableLog('ALL');
 
     while (!ns.fileExists(STOP_FILE, 'home')) {
-        const progress = readProgress(ns);
         const stats = ns.go.analysis.getStats();
         const faction = chooseFaction(stats, GAMES_PER_FACTION);
-        const { board, rootBranch, nodeBranch, depth, games } = planGame(
-            faction,
-            progress[faction],
-            ESCALATE_AFTER_GAMES,
-        );
+        const { board, rootBranch, nodeBranch, depth } = planGame(faction);
 
         const started = ns.go.resetBoardState(faction, board);
         if (!started) {
@@ -43,8 +33,6 @@ export async function main(ns: NS) {
             await ns.go.opponentNextTurn();
         } while (result?.type !== 'gameOver');
 
-        progress[faction] = { board, games: games + 1 };
-        writeProgress(ns, progress);
         logGameResult(ns, faction, board, depth);
     }
 
@@ -73,20 +61,6 @@ const chooseMove = (
     }
 
     return selectMove(grid, valid, depth, rootBranch, nodeBranch);
-};
-
-const readProgress = (ns: NS): ProgressMap => {
-    const raw = ns.read(PROGRESS_FILE);
-    if (!raw) return {};
-    try {
-        return JSON.parse(raw) as ProgressMap;
-    } catch {
-        return {};
-    }
-};
-
-const writeProgress = (ns: NS, progress: ProgressMap) => {
-    ns.write(PROGRESS_FILE, JSON.stringify(progress), 'w');
 };
 
 /** Log the finished game using the faction's persistent stats from analysis.getStats(). */
