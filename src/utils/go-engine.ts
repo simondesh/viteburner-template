@@ -8,16 +8,31 @@ export type Grid = string[][];
 
 export const DIRS: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
-export const POOL_MIN = 16;     // candidates expanded per node before taking the beam
+export const POOL_MIN = 8;      // candidates expanded per node before taking the beam
 export const TIE_EPSILON = 0.5; // jitter-preserving slack on the root alpha window
+
+export const SHAPE = {
+    EMPTY_TRIANGLE: 50, // penalty: a bad-shaped (inefficient) connection
+    CONNECT: 40,        // bonus: joins two of our groups
+    HANE: 80,           // bonus: turns the corner around an enemy stone in contact
+} as const;
+
+export const TACTIC = {
+    ATARI_THREAT: 400, // a move that puts an adjacent enemy group in atari
+    DEFEND_WEAK: 150,  // a move that lifts a 2-liberty own group out of danger
+} as const;
 
 // Static position-evaluation weights, from black's (our) perspective.
 export const EVAL = {
     STONE: 10,      // per stone on the board (area scoring)
-    TERRITORY: 12,  // per empty point controlled by a single colour
+    TERRITORY: 10,  // per controlled empty point — equal to a stone (true area scoring)
     ATARI: 12,      // per stone in a group with 1 liberty (treat as nearly lost)
     WEAK: 2,        // per stone in a group with 2 liberties (under pressure)
 } as const;
+
+// A point only counts as territory when one colour reaches it at least this many
+// steps sooner than the other — so "territory" means clear control, not noise.
+export const INFLUENCE_MARGIN = 2;
 
 // ---------------------------------------------------------------------------
 // Go rules engine (pure functions over a grid).
@@ -168,6 +183,53 @@ export const secureTerritoryMask = (grid: Grid, color: string): boolean[][] => {
 };
 
 /**
+ * Local shape quality of playing `color` at (x, y), from the original board (no
+ * stone is played). Rewards good shape (connecting two groups; a hane that turns
+ * around an enemy stone we already touch) and penalises the empty triangle (a
+ * bad-shaped connection: two perpendicular own neighbours with an empty diagonal
+ * corner). Used to bias both the candidate ranking and the beam ordering.
+ */
+export const shapeScore = (grid: Grid, x: number, y: number, color: string): number => {
+    const size = grid.length;
+    const enemy = color === 'X' ? 'O' : 'X';
+    const at = (a: number, b: number): string | null =>
+        a < 0 || b < 0 || a >= size || b >= size ? null : grid[a][b];
+    const diagonals: [number, number][] = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+    let score = 0;
+
+    // Empty triangle: move + two perpendicular own neighbours, empty diagonal corner.
+    for (const [dx, dy] of diagonals) {
+        if (at(x + dx, y) === color && at(x, y + dy) === color && at(x + dx, y + dy) === '.') {
+            score -= SHAPE.EMPTY_TRIANGLE;
+        }
+    }
+
+    // Connection: the move joins >= 2 distinct own groups.
+    const seen = new Set<string>();
+    let ownGroups = 0;
+    for (const [dx, dy] of DIRS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (at(nx, ny) !== color || seen.has(`${nx},${ny}`)) continue;
+        ownGroups++;
+        for (const [cx, cy] of groupAt(grid, nx, ny).cells) seen.add(`${cx},${cy}`);
+    }
+    if (ownGroups >= 2) score += SHAPE.CONNECT;
+
+    // Hane: diagonal to an enemy stone while we touch one of the two shared cells
+    // (turning the corner around an enemy in contact).
+    for (const [dx, dy] of diagonals) {
+        if (at(x + dx, y + dy) !== enemy) continue;
+        if (at(x + dx, y) === color || at(x, y + dy) === color) {
+            score += SHAPE.HANE;
+            break;
+        }
+    }
+
+    return score;
+};
+
+/**
  * Cheap best-first ranking of candidate moves for `color` — no board is played,
  * so it is fast enough to call at every search node. Applies the same two
  * exclusions the search relies on: never our own secure territory/eyes, and never
@@ -221,6 +283,7 @@ export const rankMoves = (grid: Grid, color: string): { x: number; y: number; sc
             if (threatened > 0) score += 300 + threatened * 30;
             if (rescued > 0) score += 200 + rescued * 50;
             if (touchesEnemy) score += 50;
+            score += shapeScore(grid, x, y, color);
 
             out.push({ x, y, score });
         }
@@ -248,6 +311,7 @@ export const expandMove = (
 
     let rescued = 0;
     let threatened = 0;
+    let weakOwn = 0; // our adjacent groups at 2 liberties (in danger) before the move
     for (const [dx, dy] of DIRS) {
         const nx = x + dx;
         const ny = y + dy;
@@ -256,6 +320,7 @@ export const expandMove = (
         if (cell === color) {
             const g = groupAt(grid, nx, ny);
             if (g.liberties === 1) rescued += g.cells.length;
+            else if (g.liberties === 2) weakOwn += g.cells.length;
         } else if (cell === enemy) {
             const g = groupAt(grid, nx, ny);
             if (g.liberties === 2) threatened += g.cells.length;
@@ -270,6 +335,26 @@ export const expandMove = (
     if (rescued > 0 && own.liberties > 1) ord += 500 + rescued * 50;
     if (threatened > 0) ord += 300 + threatened * 30;
     if (played.captured === 0 && own.liberties === 1) ord -= 10000;
+    ord += shapeScore(grid, x, y, color);
+
+    // Defense: this move lifted a weak (2-liberty) own group to safety.
+    if (weakOwn > 0 && own.liberties > 2) ord += TACTIC.DEFEND_WEAK;
+
+    // Offense: a one-shot bonus if this move leaves any adjacent enemy group in
+    // atari (1 liberty, not captured). One-shot — not per group — so it stays
+    // below the capture tier even on a double-atari.
+    const atariSeen = new Set<string>();
+    let atariThreat = false;
+    for (const [dx, dy] of DIRS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        if (played.grid[nx][ny] !== enemy || atariSeen.has(`${nx},${ny}`)) continue;
+        const g = groupAt(played.grid, nx, ny);
+        for (const [cx, cy] of g.cells) atariSeen.add(`${cx},${cy}`);
+        if (g.liberties === 1) atariThreat = true;
+    }
+    if (atariThreat) ord += TACTIC.ATARI_THREAT;
 
     return { grid: played.grid, ord };
 };
@@ -333,8 +418,8 @@ export const evaluateBoard = (grid: Grid): number => {
             if (grid[x][y] !== '.') continue;
             const dx = distX[x][y];
             const dox = distO[x][y];
-            if (dx < dox) value += EVAL.TERRITORY;
-            else if (dox < dx) value -= EVAL.TERRITORY;
+            if (isFinite(dx) && dx + INFLUENCE_MARGIN <= dox) value += EVAL.TERRITORY;
+            else if (isFinite(dox) && dox + INFLUENCE_MARGIN <= dx) value -= EVAL.TERRITORY;
         }
     }
 

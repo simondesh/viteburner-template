@@ -9,6 +9,11 @@ import {
     expandMove,
     evaluateBoard,
     selectMove,
+    EVAL,
+    INFLUENCE_MARGIN,
+    SHAPE,
+    TACTIC,
+    shapeScore,
     type Grid,
 } from '../src/utils/go-engine.ts';
 
@@ -63,13 +68,33 @@ test('evaluateBoard credits sealed territory to its owner', () => {
     assert.ok(evaluateBoard(grid) > 0);
 });
 
-test('filling our own enclosed territory is not net-positive', () => {
+test('stone and territory are weighted equally (true area scoring)', () => {
+    assert.equal(EVAL.STONE, EVAL.TERRITORY);
+    assert.equal(INFLUENCE_MARGIN, 2);
+});
+
+test('a symmetric position evaluates to zero', () => {
+    assert.equal(evaluateBoard(parseBoard(['X.O', '...', '...'])), 0);
+    assert.equal(evaluateBoard(parseBoard(['XX...OO', '.......', '.......', '.......', '.......', '.......', '.......'])), 0);
+});
+
+test('a one-colour-enclosed region still counts as territory under the margin', () => {
+    assert.ok(evaluateBoard(parseBoard(['XXXXXXX', 'X.....X', 'X.....X', 'X.....X', 'X.....X', 'X.....X', 'XXXXXXX'])) > 0);
+});
+
+test('an empty board is neutral (cells unreachable by both colours count for nobody)', () => {
+    // Guards the Infinity edge: a cell with distX == distO == Infinity must NOT be
+    // credited to X (Infinity + margin <= Infinity would otherwise be true).
+    assert.equal(evaluateBoard(parseBoard(['...', '...', '...'])), 0);
+});
+
+test('filling our own settled territory is not a gain', () => {
     const before = parseBoard(ENCLOSED);
-    const played = playStone(before, 1, 1, 'X'); // deep interior, far from the O
+    const played = playStone(before, 1, 1, 'X');
     assert.ok(played);
     assert.ok(
-        evaluateBoard(played!.grid) < evaluateBoard(before),
-        'filling own territory should shed value',
+        evaluateBoard(played!.grid) <= evaluateBoard(before),
+        'filling own territory must not increase value',
     );
 });
 
@@ -127,6 +152,49 @@ test('expandMove heavily penalizes self-atari', () => {
     const e = expandMove(grid, 0, 2, 'X'); // 1-liberty stone, captures nothing
     assert.ok(e);
     assert.ok(e!.ord < 0, `self-atari should score negative, got ${e!.ord}`);
+});
+
+test('shapeScore: a straight connection of two groups is rewarded', () => {
+    // Playing the middle of X.X joins two distinct one-stone groups in a straight line.
+    assert.equal(shapeScore(parseBoard(['X.X', '...', '...']), 0, 1, 'X'), SHAPE.CONNECT);
+});
+
+test('shapeScore: an empty triangle is penalised (bad-shaped connection)', () => {
+    // Playing (1,1) joins the two diagonal stones but forms an empty triangle
+    // (corner (0,0) empty): CONNECT - EMPTY_TRIANGLE, net negative.
+    assert.equal(shapeScore(parseBoard(['.X.', 'X..', '...']), 1, 1, 'X'), SHAPE.CONNECT - SHAPE.EMPTY_TRIANGLE);
+});
+
+test('shapeScore: a hane turning around an enemy stone in contact is rewarded', () => {
+    // (1,1) is diagonal to the enemy at (0,0) and shares the own stone at (1,0).
+    assert.equal(shapeScore(parseBoard(['O..', 'X..', '...']), 1, 1, 'X'), SHAPE.HANE);
+});
+
+test('shapeScore: a plain move with no neighbours scores zero', () => {
+    assert.equal(shapeScore(parseBoard(['..', '..']), 0, 0, 'X'), 0);
+});
+
+test('shapeScore is folded into expandMove ord', () => {
+    // (0,1) connects the two X groups in a straight line (+CONNECT). The own group
+    // then has 3 liberties, so the tactical base is only 3*5=15 — the ord clearing
+    // SHAPE.CONNECT proves the shape bonus was added.
+    const e = expandMove(parseBoard(['X.X', '...', '...']), 0, 1, 'X');
+    assert.ok(e);
+    assert.ok(e!.ord >= SHAPE.CONNECT, `connection shape bonus should be in ord, got ${e!.ord}`);
+});
+
+test('expandMove rewards putting an enemy group in atari (offense)', () => {
+    // O at (1,1) has 2 liberties; playing X (1,2) leaves it with 1 (atari, not captured).
+    const e = expandMove(parseBoard(['.X.', 'XO.', '...']), 1, 2, 'X');
+    assert.ok(e);
+    assert.ok(e!.ord >= TACTIC.ATARI_THREAT, `atari threat should be scored, got ${e!.ord}`);
+});
+
+test('expandMove rewards lifting a weak (2-liberty) own group to safety (defense)', () => {
+    // X (0,0) has 2 liberties; playing X (0,1) raises the group to 3 liberties.
+    const e = expandMove(parseBoard(['X..', '...', '...']), 0, 1, 'X');
+    assert.ok(e);
+    assert.ok(e!.ord >= TACTIC.DEFEND_WEAK, `defense should be scored, got ${e!.ord}`);
 });
 
 // ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ export const FACTION_LADDER: GoFaction[] = [
     'Tetrads',
     'Daedalus',
     'Illuminati',
-    '????????????',
+    //'????????????',
 ];
 
 export const SEARCH_DEPTH = 4;        // base (even) depth; harder factions go deeper
@@ -68,16 +68,18 @@ export const chooseFaction = (
 
 /** Search depth by faction difficulty (always even). Harder factions search deeper. */
 export const depthForFaction = (faction: GoFaction): number => {
-    if (faction === '????????????') return 8;
-    if (faction === 'Daedalus' || faction === 'Illuminati') return 6;
+    if (faction === '????????????' || faction === 'Illuminati') return 10;
+    if (faction === 'Daedalus') return 8;
     return SEARCH_DEPTH;
 };
 
 // Deep-search factions use a narrow beam so the deeper search stays affordable
-// (cost grows as beam^depth). Easy factions fall back to the wide 7x7 beam.
+// (cost grows as beam^depth). Illuminati is the top faction we actually play, so
+// it gets the deepest search on the narrowest beam. Easy factions fall back to
+// the wide 7x7 beam.
 const DEEP_BEAMS: Partial<Record<GoFaction, BranchWidths>> = {
     Daedalus: { rootBranch: 8, nodeBranch: 4 },
-    Illuminati: { rootBranch: 8, nodeBranch: 4 },
+    Illuminati: { rootBranch: 6, nodeBranch: 3 },
     '????????????': { rootBranch: 6, nodeBranch: 3 },
 };
 
