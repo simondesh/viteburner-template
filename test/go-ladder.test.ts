@@ -19,8 +19,8 @@ test('SEARCH_DEPTH (base depth) is even and 4', () => {
     assert.equal(SEARCH_DEPTH, 4);
 });
 
-test('GAMES_PER_FACTION is 100', () => {
-    assert.equal(GAMES_PER_FACTION, 100);
+test('GAMES_PER_FACTION is 50', () => {
+    assert.equal(GAMES_PER_FACTION, 50);
 });
 
 test('FIXED_BOARD is 7 (every faction plays on a 7x7 board)', () => {

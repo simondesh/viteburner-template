@@ -35,7 +35,7 @@ export const FACTION_LADDER: GoFaction[] = [
 ];
 
 export const SEARCH_DEPTH = 4;        // base (even) depth; harder factions go deeper
-export const GAMES_PER_FACTION = 100; // games (wins+losses) before advancing a faction
+export const GAMES_PER_FACTION = 50; // games (wins+losses) before advancing a faction
 export const FIXED_BOARD: BoardSize = 7; // every faction plays on a 7x7 board
 
 // Beam widths by board size. Wide on small boards (search broadly, never prune a
