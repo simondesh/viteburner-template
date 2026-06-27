@@ -49,9 +49,9 @@ test('chooseFaction returns the last faction in the ladder once all are played o
 test('depthForFaction deepens for harder factions and is always even', () => {
     assert.equal(depthForFaction('Netburners'), 4);
     assert.equal(depthForFaction('Tetrads'), 4);
-    assert.equal(depthForFaction('Daedalus'), 6);
-    assert.equal(depthForFaction('Illuminati'), 6);
-    assert.equal(depthForFaction('????????????'), 8);
+    assert.equal(depthForFaction('Daedalus'), 8);
+    assert.equal(depthForFaction('Illuminati'), 10);
+    assert.equal(depthForFaction('????????????'), 10);
     for (const f of FACTION_LADDER) assert.equal(depthForFaction(f) % 2, 0);
 });
 
@@ -78,15 +78,16 @@ test('planGame: an easy faction uses 7x7 with the wide beam and depth 4', () => 
 test('planGame: deep factions use 7x7 with a narrow beam and deeper search', () => {
     assert.deepEqual(
         planGame('Daedalus'),
-        { board: 7, rootBranch: 8, nodeBranch: 4, depth: 6 },
+        { board: 7, rootBranch: 8, nodeBranch: 4, depth: 8 },
     );
+    // Illuminati is the top faction now: deepest search (10) on the narrowest beam.
     assert.deepEqual(
         planGame('Illuminati'),
-        { board: 7, rootBranch: 8, nodeBranch: 4, depth: 6 },
+        { board: 7, rootBranch: 6, nodeBranch: 3, depth: 10 },
     );
     assert.deepEqual(
         planGame('????????????'),
-        { board: 7, rootBranch: 6, nodeBranch: 3, depth: 8 },
+        { board: 7, rootBranch: 6, nodeBranch: 3, depth: 10 },
     );
 });
 

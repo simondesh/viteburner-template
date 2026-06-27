@@ -8,7 +8,7 @@ export type Grid = string[][];
 
 export const DIRS: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
-export const POOL_MIN = 16;     // candidates expanded per node before taking the beam
+export const POOL_MIN = 8;      // candidates expanded per node before taking the beam
 export const TIE_EPSILON = 0.5; // jitter-preserving slack on the root alpha window
 
 export const SHAPE = {
