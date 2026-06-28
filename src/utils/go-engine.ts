@@ -31,6 +31,7 @@ export const EVAL = {
     ATARI: 12,      // per stone in a group with 1 liberty (treat as nearly lost)
     WEAK: 2,        // per stone in a group with 2 liberties (under pressure)
     CUT: 6,         // per cutting point (empty point adjoining 2+ of one colour's groups)
+    EYE: 6,         // per real eye (life value beyond the territory the point already scores)
 } as const;
 
 // A point only counts as territory when one colour reaches it at least this many
@@ -429,6 +430,55 @@ export const cuttingPointCounts = (grid: Grid): { x: number; o: number } => {
 };
 
 /**
+ * Count "real eyes" per colour. An empty point P is a real eye for colour C when:
+ *   1. every on-board orthogonal neighbour of P is a C stone, and
+ *   2. its diagonals are controlled — interior points need >= 3 of the 4 diagonals
+ *      to be C; edge/corner points need ALL their on-board diagonals to be C.
+ * This is the standard false-eye-resistant test. Eyes are the basis of life, so the
+ * eval rewards ours and penalises the opponent's.
+ */
+export const realEyeCounts = (grid: Grid): { x: number; o: number } => {
+    const size = grid.length;
+    const diagonals: [number, number][] = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+    let x = 0;
+    let o = 0;
+
+    for (let px = 0; px < size; px++) {
+        for (let py = 0; py < size; py++) {
+            if (grid[px][py] !== '.') continue;
+
+            let color: string | null = null;
+            let surrounded = true;
+            for (const [dx, dy] of DIRS) {
+                const nx = px + dx;
+                const ny = py + dy;
+                if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue; // edge: not disqualifying
+                const cell = grid[nx][ny];
+                if (cell === '.') { surrounded = false; break; }
+                if (color === null) color = cell;
+                else if (cell !== color) { surrounded = false; break; }
+            }
+            if (!surrounded || color === null) continue;
+
+            let off = 0;
+            let same = 0;
+            for (const [dx, dy] of diagonals) {
+                const nx = px + dx;
+                const ny = py + dy;
+                if (nx < 0 || ny < 0 || nx >= size || ny >= size) { off++; continue; }
+                if (grid[nx][ny] === color) same++;
+            }
+            const real = off === 0 ? same >= 3 : same === 4 - off;
+            if (!real) continue;
+
+            if (color === 'X') x++;
+            else if (color === 'O') o++;
+        }
+    }
+    return { x, o };
+};
+
+/**
  * Static evaluation of a position, black-positive. Area scoring with safety:
  *   + stones on the board
  *   + empty points controlled by a single colour (territory, by influence)
@@ -482,6 +532,10 @@ export const evaluateBoard = (grid: Grid): number => {
     // Connection/cut: penalise our own cutting points, reward the enemy's.
     const cuts = cuttingPointCounts(grid);
     value += -EVAL.CUT * cuts.x + EVAL.CUT * cuts.o;
+
+    // Eyes: reward our real eyes (life), penalise the enemy's.
+    const eyes = realEyeCounts(grid);
+    value += EVAL.EYE * eyes.x - EVAL.EYE * eyes.o;
 
     return value;
 };

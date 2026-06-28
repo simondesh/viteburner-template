@@ -10,6 +10,7 @@ import {
     evaluateBoard,
     selectMove,
     cuttingPointCounts,
+    realEyeCounts,
     EVAL,
     INFLUENCE_MARGIN,
     SHAPE,
@@ -270,6 +271,30 @@ test('evaluateBoard applies exactly the cutting-point penalty (term isolated)', 
     const cut2 = evaluateBoard(parseBoard(['X.', '.X'])); // cuttingPointCounts -> { x: 2, o: 0 }
     const cut0 = evaluateBoard(parseBoard(['XX', '..'])); // cuttingPointCounts -> { x: 0, o: 0 }
     assert.equal(cut0 - cut2, 2 * EVAL.CUT);
+});
+
+// ---------------------------------------------------------------------------
+// Real eyes — the foundation of life (groups with 2+ eyes cannot be killed).
+// ---------------------------------------------------------------------------
+
+test('realEyeCounts: a fully-surrounded point with controlled diagonals is a real eye', () => {
+    assert.deepEqual(realEyeCounts(parseBoard(['XXX', 'X.X', 'XXX'])), { x: 1, o: 0 });
+});
+
+test('realEyeCounts: orthogonally surrounded but diagonally uncontrolled is a false eye', () => {
+    // (1,1) has all-X orthogonals but 0 X diagonals (interior needs >=3) -> not real.
+    assert.deepEqual(realEyeCounts(parseBoard(['.X.', 'X.X', '.X.'])), { x: 0, o: 0 });
+});
+
+test('realEyeCounts: a corner eye needs only its on-board diagonal controlled', () => {
+    // (0,0): on-board orthogonals (0,1),(1,0) are X; the one on-board diagonal (1,1) is X.
+    assert.deepEqual(realEyeCounts(parseBoard(['.X', 'XX'])), { x: 1, o: 0 });
+});
+
+test('evaluateBoard stays antisymmetric with eyes present (eye term correctly signed)', () => {
+    const b = parseBoard(['XXX', 'X.X', 'XX.']); // (1,1) is a real X eye (3 controlled diagonals)
+    const swapped = b.map((row) => row.map((c) => (c === 'X' ? 'O' : c === 'O' ? 'X' : c)));
+    assert.equal(evaluateBoard(b), -evaluateBoard(swapped));
 });
 
 // ---------------------------------------------------------------------------
