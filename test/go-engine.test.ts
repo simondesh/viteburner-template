@@ -9,6 +9,7 @@ import {
     expandMove,
     evaluateBoard,
     selectMove,
+    cuttingPointCounts,
     EVAL,
     INFLUENCE_MARGIN,
     SHAPE,
@@ -170,6 +171,16 @@ test('shapeScore: a hane turning around an enemy stone in contact is rewarded', 
     assert.equal(shapeScore(parseBoard(['O..', 'X..', '...']), 1, 1, 'X'), SHAPE.HANE);
 });
 
+test('shapeScore: a wedge between two enemy groups (cut) is rewarded', () => {
+    // (0,1) is adjacent to the two distinct O groups at (0,0) and (0,2).
+    assert.equal(shapeScore(parseBoard(['O.O', '...', '...']), 0, 1, 'X'), SHAPE.CUT);
+});
+
+test('shapeScore: touching a single enemy group is not a cut', () => {
+    // (0,1) adjoins only one enemy group; no cut bonus (and no other shape here).
+    assert.equal(shapeScore(parseBoard(['O..', '...', '...']), 0, 1, 'X'), 0);
+});
+
 test('shapeScore: a plain move with no neighbours scores zero', () => {
     assert.equal(shapeScore(parseBoard(['..', '..']), 0, 0, 'X'), 0);
 });
@@ -231,6 +242,33 @@ test('selectMove never returns a move the game marks invalid', () => {
     valid[1][2] = false;
     const move = selectMove(grid, valid, 4, 12, 12, () => 0);
     assert.ok(move === null || !(move[0] === 1 && move[1] === 2));
+});
+
+// ---------------------------------------------------------------------------
+// Cutting points — empty spots that separate two or more of same-colour groups.
+// ---------------------------------------------------------------------------
+
+test('cuttingPointCounts: an empty point adjacent to two separate same-colour groups is a cut', () => {
+    // X at (0,0) and (0,2) are two distinct groups; (0,1) is adjacent to both.
+    assert.deepEqual(cuttingPointCounts(parseBoard(['X.X', '...', '...'])), { x: 1, o: 0 });
+});
+
+test('cuttingPointCounts: a single connected group has no cutting point', () => {
+    assert.deepEqual(cuttingPointCounts(parseBoard(['XXX', '...', '...'])), { x: 0, o: 0 });
+});
+
+test('cuttingPointCounts: counts each colour independently', () => {
+    assert.deepEqual(cuttingPointCounts(parseBoard(['X.X', '...', 'O.O'])), { x: 1, o: 1 });
+});
+
+test('evaluateBoard applies exactly the cutting-point penalty (term isolated)', () => {
+    // Two boards with identical stones, territory, and liberty penalties, differing
+    // ONLY in cutting points: 'X. / .X' (two diagonal X groups) has 2 cutting points
+    // — both empties touch both groups; 'XX / ..' (one connected group) has 0. So the
+    // value difference is exactly 2*EVAL.CUT, isolating the term from everything else.
+    const cut2 = evaluateBoard(parseBoard(['X.', '.X'])); // cuttingPointCounts -> { x: 2, o: 0 }
+    const cut0 = evaluateBoard(parseBoard(['XX', '..'])); // cuttingPointCounts -> { x: 0, o: 0 }
+    assert.equal(cut0 - cut2, 2 * EVAL.CUT);
 });
 
 // ---------------------------------------------------------------------------
