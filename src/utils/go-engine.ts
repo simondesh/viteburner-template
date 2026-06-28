@@ -10,6 +10,7 @@ export const DIRS: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], 
 
 export const POOL_MIN = 8;      // candidates expanded per node before taking the beam
 export const TIE_EPSILON = 0.5; // jitter-preserving slack on the root alpha window
+export const YIELD_NODES = 2000; // search nodes between cooperative yields to the game
 
 export const SHAPE = {
     EMPTY_TRIANGLE: 50, // penalty: a bad-shaped (inefficient) connection
@@ -490,14 +491,16 @@ export const evaluateBoard = (grid: Grid): number => {
  * position with `toMove` to play, expanding at most `nodeBranch` moves per node.
  * Black ('X', us) maximises.
  */
-export const search = (
+export const search = async (
     grid: Grid,
     toMove: string,
     depth: number,
     alpha: number,
     beta: number,
     nodeBranch: number,
-): number => {
+    tick: () => Promise<void>,
+): Promise<number> => {
+    await tick();
     if (depth === 0) return evaluateBoard(grid);
 
     const moves = beam(grid, toMove, nodeBranch);
@@ -506,7 +509,7 @@ export const search = (
     if (toMove === 'X') {
         let best = -Infinity;
         for (const m of moves) {
-            best = Math.max(best, search(m.grid, 'O', depth - 1, alpha, beta, nodeBranch));
+            best = Math.max(best, await search(m.grid, 'O', depth - 1, alpha, beta, nodeBranch, tick));
             alpha = Math.max(alpha, best);
             if (alpha >= beta) break;
         }
@@ -515,7 +518,7 @@ export const search = (
 
     let best = Infinity;
     for (const m of moves) {
-        best = Math.min(best, search(m.grid, 'X', depth - 1, alpha, beta, nodeBranch));
+        best = Math.min(best, await search(m.grid, 'X', depth - 1, alpha, beta, nodeBranch, tick));
         beta = Math.min(beta, best);
         if (alpha >= beta) break;
     }
@@ -530,14 +533,20 @@ export const search = (
  * TIE_EPSILON` so genuinely tied moves still return exact values and the jitter
  * tie-break (deterministic via `rng` in tests) still applies.
  */
-export const selectMove = (
+export const selectMove = async (
     grid: Grid,
     validMoves: boolean[][],
     depth: number,
     rootBranch: number,
     nodeBranch: number,
     rng: () => number = Math.random,
-): [number, number] | null => {
+    onTick: () => Promise<void> = async () => {},
+): Promise<[number, number] | null> => {
+    let nodes = 0;
+    const tick = async () => {
+        if (++nodes % YIELD_NODES === 0) await onTick();
+    };
+
     const ranked = rankMoves(grid, 'X').filter((m) => validMoves[m.x]?.[m.y] === true);
     if (ranked.length === 0) return null;
 
@@ -551,17 +560,16 @@ export const selectMove = (
     const top = roots.slice(0, rootBranch);
     if (top.length === 0) return null;
 
-    // Baseline value of passing (standing pat). A move must beat this to be played.
-    const passValue = search(grid, 'O', depth - 1, -Infinity, Infinity, nodeBranch);
+    const passValue = await search(grid, 'O', depth - 1, -Infinity, Infinity, nodeBranch, tick);
 
     let best: [number, number] | null = null;
     let bestValue = passValue;
     let bestJittered = -Infinity;
     for (const m of top) {
         const window = best === null ? passValue : bestValue - TIE_EPSILON;
-        const value = search(m.grid, 'O', depth - 1, window, Infinity, nodeBranch);
-        if (value <= passValue) continue;                 // must beat passing
-        if (best !== null && value < bestValue) continue; // worse than the running best
+        const value = await search(m.grid, 'O', depth - 1, window, Infinity, nodeBranch, tick);
+        if (value <= passValue) continue;
+        if (best !== null && value < bestValue) continue;
         const jittered = value + rng() * 0.01;
         if (jittered > bestJittered) {
             best = [m.x, m.y];
@@ -570,7 +578,7 @@ export const selectMove = (
         }
     }
 
-    return best; // null => pass
+    return best;
 };
 
 // ---------------------------------------------------------------------------

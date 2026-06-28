@@ -27,7 +27,7 @@ export async function main(ns: NS) {
 
         let result;
         do {
-            const move = chooseMove(ns, depth, rootBranch, nodeBranch);
+            const move = await chooseMove(ns, depth, rootBranch, nodeBranch);
             if (move) result = await ns.go.makeMove(move[0], move[1]);
             else result = await ns.go.passTurn();
             await ns.go.opponentNextTurn();
@@ -43,12 +43,12 @@ export async function main(ns: NS) {
  * Pick our move by mirroring the live board into a mutable grid and handing it to
  * the engine's bounded alpha-beta search at the faction's depth/branch widths.
  */
-const chooseMove = (
+const chooseMove = async (
     ns: NS,
     depth: number,
     rootBranch: number,
     nodeBranch: number,
-): [number, number] | null => {
+): Promise<[number, number] | null> => {
     const board = ns.go.getBoardState();
     const valid = ns.go.analysis.getValidMoves();
     const size = board[0].length;
@@ -60,7 +60,9 @@ const chooseMove = (
         grid.push(col);
     }
 
-    return selectMove(grid, valid, depth, rootBranch, nodeBranch);
+    // Yield to the game every YIELD_NODES nodes so a deep search never freezes
+    // the tab or trips Bitburner's no-yield guard.
+    return selectMove(grid, valid, depth, rootBranch, nodeBranch, Math.random, () => ns.sleep(0));
 };
 
 /** Log the finished game using the faction's persistent stats from analysis.getStats(). */
