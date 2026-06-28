@@ -10,11 +10,13 @@ import {
     evaluateBoard,
     selectMove,
     cuttingPointCounts,
+    realEyeCounts,
     EVAL,
     INFLUENCE_MARGIN,
     SHAPE,
     TACTIC,
     shapeScore,
+    YIELD_NODES,
     type Grid,
 } from '../src/utils/go-engine.ts';
 
@@ -212,35 +214,35 @@ test('expandMove rewards lifting a weak (2-liberty) own group to safety (defense
 // selectMove — plays gains, passes when settled, ignores self-fill, score-blind.
 // ---------------------------------------------------------------------------
 
-test('selectMove plays a gaining move rather than passing, and never a self-fill', () => {
+test('selectMove plays a gaining move rather than passing, and never a self-fill', async () => {
     const grid = parseBoard(ENCLOSED);
-    const move = selectMove(grid, allValid(grid), 4, 12, 12, () => 0);
+    const move = await selectMove(grid, allValid(grid), 4, 12, 12, () => 0);
     assert.notEqual(move, null);
     assert.ok(!(move![0] === 1 && move![1] === 1), 'must not return the excluded deep self-fill');
 });
 
-test('selectMove passes when every empty point is settled', () => {
+test('selectMove passes when every empty point is settled', async () => {
     // X alive (two eyes) on top; O alive (two eyes) on the bottom; no dame. Our
     // eyes are secure territory and the opponent's eyes are suicide for us, so
     // there is no legal, non-self-harming move -> selectMove must pass.
     const grid = parseBoard(['XXXXX', 'X.X.X', 'XXXXX', 'OOOOO', 'O.O.O']);
-    assert.equal(selectMove(grid, allValid(grid), 4, 12, 12, () => 0), null);
+    assert.equal(await selectMove(grid, allValid(grid), 4, 12, 12, () => 0), null);
 });
 
-test('selectMove decision does not depend on the score (no isAhead gate)', () => {
+test('selectMove decision does not depend on the score (no isAhead gate)', async () => {
     const fighting = parseBoard(ENCLOSED);
     const settled = parseBoard(['XXXXX', 'X.X.X', 'XXXXX', 'OOOOO', 'O.O.O']);
-    assert.notEqual(selectMove(fighting, allValid(fighting), 4, 12, 12, () => 0), null);
-    assert.equal(selectMove(settled, allValid(settled), 4, 12, 12, () => 0), null);
+    assert.notEqual(await selectMove(fighting, allValid(fighting), 4, 12, 12, () => 0), null);
+    assert.equal(await selectMove(settled, allValid(settled), 4, 12, 12, () => 0), null);
 });
 
-test('selectMove never returns a move the game marks invalid', () => {
+test('selectMove never returns a move the game marks invalid', async () => {
     // The capturing move (1,2) is the strongest, but if the game forbids it (ko),
     // selectMove must not return it.
     const grid = parseBoard(['.X.', 'XO.', '.X.']);
     const valid = allValid(grid);
     valid[1][2] = false;
-    const move = selectMove(grid, valid, 4, 12, 12, () => 0);
+    const move = await selectMove(grid, valid, 4, 12, 12, () => 0);
     assert.ok(move === null || !(move[0] === 1 && move[1] === 2));
 });
 
@@ -272,29 +274,62 @@ test('evaluateBoard applies exactly the cutting-point penalty (term isolated)', 
 });
 
 // ---------------------------------------------------------------------------
+// Real eyes — the foundation of life (groups with 2+ eyes cannot be killed).
+// ---------------------------------------------------------------------------
+
+test('realEyeCounts: a fully-surrounded point with controlled diagonals is a real eye', () => {
+    assert.deepEqual(realEyeCounts(parseBoard(['XXX', 'X.X', 'XXX'])), { x: 1, o: 0 });
+});
+
+test('realEyeCounts: orthogonally surrounded but diagonally uncontrolled is a false eye', () => {
+    // (1,1) has all-X orthogonals but 0 X diagonals (interior needs >=3) -> not real.
+    assert.deepEqual(realEyeCounts(parseBoard(['.X.', 'X.X', '.X.'])), { x: 0, o: 0 });
+});
+
+test('realEyeCounts: a corner eye needs only its on-board diagonal controlled', () => {
+    // (0,0): on-board orthogonals (0,1),(1,0) are X; the one on-board diagonal (1,1) is X.
+    assert.deepEqual(realEyeCounts(parseBoard(['.X', 'XX'])), { x: 1, o: 0 });
+});
+
+test('evaluateBoard stays antisymmetric with eyes present (eye term correctly signed)', () => {
+    const b = parseBoard(['XXX', 'X.X', 'XX.']); // (1,1) is a real X eye (3 controlled diagonals)
+    const swapped = b.map((row) => row.map((c) => (c === 'X' ? 'O' : c === 'O' ? 'X' : c)));
+    assert.equal(evaluateBoard(b), -evaluateBoard(swapped));
+});
+
+// ---------------------------------------------------------------------------
 // Regression guards for the headline fixes (positions verified against the
 // engine itself, not hand-guessed). Both assert the decision *changes*, which is
 // what would silently break if depth regressed to odd/shallow or the beam to too narrow.
 // ---------------------------------------------------------------------------
 
-test('a deeper search changes the chosen move (horizon parity)', () => {
+test('a deeper search changes the chosen move (horizon parity)', async () => {
     // At depth 2 the search evaluates right after our own move; at depth 4 it sees
     // the opponent's reply and prefers a different move. Guards the even-depth fix.
     const grid = parseBoard(['.O.O.', 'O.OO.', '.OO..', 'XXX..', 'OO..X']);
     const valid = allValid(grid);
-    const shallow = selectMove(grid, valid, 2, 12, 12, () => 0);
-    const deep = selectMove(grid, valid, 4, 12, 12, () => 0);
+    const shallow = await selectMove(grid, valid, 2, 12, 12, () => 0);
+    const deep = await selectMove(grid, valid, 4, 12, 12, () => 0);
     assert.ok(shallow && deep, 'both depths should play a move on this position');
     assert.notDeepEqual(shallow, deep, 'search depth must influence the chosen move');
 });
 
-test('a wider beam changes the chosen move (no forward-pruning a tactic)', () => {
+test('a wider beam changes the chosen move (no forward-pruning a tactic)', async () => {
     // A narrow beam prunes, sight-unseen, the move a wide beam plays. Guards the
     // board-scaled wide beam against a regression to a too-narrow one.
     const grid = parseBoard(['XOO.X', 'OX..X', '..OO.', 'XXX.O', 'XOX.X']);
     const valid = allValid(grid);
-    const narrow = selectMove(grid, valid, 4, 2, 2, () => 0);
-    const wide = selectMove(grid, valid, 4, 25, 25, () => 0);
+    const narrow = await selectMove(grid, valid, 4, 2, 2, () => 0);
+    const wide = await selectMove(grid, valid, 4, 25, 25, () => 0);
     assert.ok(narrow && wide, 'both beam widths should play a move on this position');
     assert.notDeepEqual(narrow, wide, 'beam width must influence the chosen move');
+});
+
+test('selectMove yields to onTick during a large search', async () => {
+    const empty = parseBoard(['.......', '.......', '.......', '.......', '.......', '.......', '.......']);
+    let ticks = 0;
+    await selectMove(empty, allValid(empty), 4, 12, 12, () => 0, async () => {
+        ticks++;
+    });
+    assert.ok(ticks > 0, 'onTick should fire at least once on a depth-4 7x7 search');
 });

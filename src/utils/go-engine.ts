@@ -10,6 +10,7 @@ export const DIRS: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], 
 
 export const POOL_MIN = 8;      // candidates expanded per node before taking the beam
 export const TIE_EPSILON = 0.5; // jitter-preserving slack on the root alpha window
+export const YIELD_NODES = 2000; // search nodes between cooperative yields to the game
 
 export const SHAPE = {
     EMPTY_TRIANGLE: 50, // penalty: a bad-shaped (inefficient) connection
@@ -30,6 +31,7 @@ export const EVAL = {
     ATARI: 12,      // per stone in a group with 1 liberty (treat as nearly lost)
     WEAK: 2,        // per stone in a group with 2 liberties (under pressure)
     CUT: 6,         // per cutting point (empty point adjoining 2+ of one colour's groups)
+    EYE: 6,         // per real eye (life value beyond the territory the point already scores)
 } as const;
 
 // A point only counts as territory when one colour reaches it at least this many
@@ -428,6 +430,55 @@ export const cuttingPointCounts = (grid: Grid): { x: number; o: number } => {
 };
 
 /**
+ * Count "real eyes" per colour. An empty point P is a real eye for colour C when:
+ *   1. every on-board orthogonal neighbour of P is a C stone, and
+ *   2. its diagonals are controlled — interior points need >= 3 of the 4 diagonals
+ *      to be C; edge/corner points need ALL their on-board diagonals to be C.
+ * This is the standard false-eye-resistant test. Eyes are the basis of life, so the
+ * eval rewards ours and penalises the opponent's.
+ */
+export const realEyeCounts = (grid: Grid): { x: number; o: number } => {
+    const size = grid.length;
+    const diagonals: [number, number][] = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+    let x = 0;
+    let o = 0;
+
+    for (let px = 0; px < size; px++) {
+        for (let py = 0; py < size; py++) {
+            if (grid[px][py] !== '.') continue;
+
+            let color: string | null = null;
+            let surrounded = true;
+            for (const [dx, dy] of DIRS) {
+                const nx = px + dx;
+                const ny = py + dy;
+                if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue; // edge: not disqualifying
+                const cell = grid[nx][ny];
+                if (cell === '.') { surrounded = false; break; }
+                if (color === null) color = cell;
+                else if (cell !== color) { surrounded = false; break; }
+            }
+            if (!surrounded || color === null) continue;
+
+            let off = 0;
+            let same = 0;
+            for (const [dx, dy] of diagonals) {
+                const nx = px + dx;
+                const ny = py + dy;
+                if (nx < 0 || ny < 0 || nx >= size || ny >= size) { off++; continue; }
+                if (grid[nx][ny] === color) same++;
+            }
+            const real = off === 0 ? same >= 3 : same === 4 - off;
+            if (!real) continue;
+
+            if (color === 'X') x++;
+            else if (color === 'O') o++;
+        }
+    }
+    return { x, o };
+};
+
+/**
  * Static evaluation of a position, black-positive. Area scoring with safety:
  *   + stones on the board
  *   + empty points controlled by a single colour (territory, by influence)
@@ -482,6 +533,10 @@ export const evaluateBoard = (grid: Grid): number => {
     const cuts = cuttingPointCounts(grid);
     value += -EVAL.CUT * cuts.x + EVAL.CUT * cuts.o;
 
+    // Eyes: reward our real eyes (life), penalise the enemy's.
+    const eyes = realEyeCounts(grid);
+    value += EVAL.EYE * eyes.x - EVAL.EYE * eyes.o;
+
     return value;
 };
 
@@ -490,14 +545,17 @@ export const evaluateBoard = (grid: Grid): number => {
  * position with `toMove` to play, expanding at most `nodeBranch` moves per node.
  * Black ('X', us) maximises.
  */
-export const search = (
+export const search = async (
     grid: Grid,
     toMove: string,
     depth: number,
     alpha: number,
     beta: number,
     nodeBranch: number,
-): number => {
+    onTick: () => Promise<void>,
+    counter: { n: number },
+): Promise<number> => {
+    if (++counter.n % YIELD_NODES === 0) await onTick();
     if (depth === 0) return evaluateBoard(grid);
 
     const moves = beam(grid, toMove, nodeBranch);
@@ -506,7 +564,7 @@ export const search = (
     if (toMove === 'X') {
         let best = -Infinity;
         for (const m of moves) {
-            best = Math.max(best, search(m.grid, 'O', depth - 1, alpha, beta, nodeBranch));
+            best = Math.max(best, await search(m.grid, 'O', depth - 1, alpha, beta, nodeBranch, onTick, counter));
             alpha = Math.max(alpha, best);
             if (alpha >= beta) break;
         }
@@ -515,7 +573,7 @@ export const search = (
 
     let best = Infinity;
     for (const m of moves) {
-        best = Math.min(best, search(m.grid, 'X', depth - 1, alpha, beta, nodeBranch));
+        best = Math.min(best, await search(m.grid, 'X', depth - 1, alpha, beta, nodeBranch, onTick, counter));
         beta = Math.min(beta, best);
         if (alpha >= beta) break;
     }
@@ -530,14 +588,17 @@ export const search = (
  * TIE_EPSILON` so genuinely tied moves still return exact values and the jitter
  * tie-break (deterministic via `rng` in tests) still applies.
  */
-export const selectMove = (
+export const selectMove = async (
     grid: Grid,
     validMoves: boolean[][],
     depth: number,
     rootBranch: number,
     nodeBranch: number,
     rng: () => number = Math.random,
-): [number, number] | null => {
+    onTick: () => Promise<void> = async () => {},
+): Promise<[number, number] | null> => {
+    const counter = { n: 0 };
+
     const ranked = rankMoves(grid, 'X').filter((m) => validMoves[m.x]?.[m.y] === true);
     if (ranked.length === 0) return null;
 
@@ -551,17 +612,16 @@ export const selectMove = (
     const top = roots.slice(0, rootBranch);
     if (top.length === 0) return null;
 
-    // Baseline value of passing (standing pat). A move must beat this to be played.
-    const passValue = search(grid, 'O', depth - 1, -Infinity, Infinity, nodeBranch);
+    const passValue = await search(grid, 'O', depth - 1, -Infinity, Infinity, nodeBranch, onTick, counter);
 
     let best: [number, number] | null = null;
     let bestValue = passValue;
     let bestJittered = -Infinity;
     for (const m of top) {
         const window = best === null ? passValue : bestValue - TIE_EPSILON;
-        const value = search(m.grid, 'O', depth - 1, window, Infinity, nodeBranch);
-        if (value <= passValue) continue;                 // must beat passing
-        if (best !== null && value < bestValue) continue; // worse than the running best
+        const value = await search(m.grid, 'O', depth - 1, window, Infinity, nodeBranch, onTick, counter);
+        if (value <= passValue) continue;
+        if (best !== null && value < bestValue) continue;
         const jittered = value + rng() * 0.01;
         if (jittered > bestJittered) {
             best = [m.x, m.y];
@@ -570,7 +630,7 @@ export const selectMove = (
         }
     }
 
-    return best; // null => pass
+    return best;
 };
 
 // ---------------------------------------------------------------------------

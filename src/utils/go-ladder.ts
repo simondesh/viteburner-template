@@ -78,7 +78,8 @@ export const chooseFaction = (
 
 /** Search depth by faction difficulty (always even). Harder factions search deeper. */
 export const depthForFaction = (faction: GoFaction): number => {
-    if (faction === '????????????' || faction === 'Illuminati' || faction === 'Daedalus') return 8;
+    if (faction === '????????????' || faction === 'Illuminati') return 12;
+    if (faction === 'Daedalus') return 10;
     return SEARCH_DEPTH;
 };
 
