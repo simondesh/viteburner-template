@@ -53,17 +53,27 @@ export const branchForBoard = (size: BoardSize): BranchWidths => {
     }
 };
 
-/** First faction not yet played to the games target; if all are, the last (hardest). */
+/**
+ * Round-robin in bands: return the first faction in the ladder that has not yet
+ * completed the current band of `gamesTarget` games. Once every faction finishes
+ * a band, the band target advances and play cycles back to the easiest faction —
+ * so the bot keeps rotating through every opponent instead of getting stuck on
+ * the last one.
+ */
 export const chooseFaction = (
     stats: Partial<Record<string, FactionStat>>,
     gamesTarget: number,
 ): GoFaction => {
-    for (const faction of FACTION_LADDER) {
+    const gamesOf = (faction: GoFaction): number => {
         const s = stats[faction];
-        const games = s ? s.wins + s.losses : 0;
-        if (games < gamesTarget) return faction;
+        return s ? s.wins + s.losses : 0;
+    };
+    const minGames = Math.min(...FACTION_LADDER.map(gamesOf));
+    const bandTarget = (Math.floor(minGames / gamesTarget) + 1) * gamesTarget;
+    for (const faction of FACTION_LADDER) {
+        if (gamesOf(faction) < bandTarget) return faction;
     }
-    return FACTION_LADDER[FACTION_LADDER.length - 1];
+    return FACTION_LADDER[0];
 };
 
 /** Search depth by faction difficulty (always even). Harder factions search deeper. */

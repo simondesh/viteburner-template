@@ -41,9 +41,23 @@ test('chooseFaction does not advance before the games target is reached', () => 
     assert.equal(chooseFaction(stats, 100), 'Netburners');
 });
 
-test('chooseFaction returns the last faction in the ladder once all are played out', () => {
+test('chooseFaction cycles back to the first faction once every faction finishes a band', () => {
+    // Every faction has played exactly one full band of 100 games -> the next band
+    // opens and play loops back to the easiest faction (not stuck on the last one).
     const stats = Object.fromEntries(FACTION_LADDER.map((f) => [f, stat(50, 50)]));
-    assert.equal(chooseFaction(stats, 100), FACTION_LADDER[FACTION_LADDER.length - 1]);
+    assert.equal(chooseFaction(stats, 100), FACTION_LADDER[0]);
+});
+
+test('chooseFaction skips factions that finished the current band and picks the next unfinished one', () => {
+    // Band target is 100 (some factions are still at 0). Netburners has run ahead
+    // (120) and Slum Snakes finished the band (100); both are skipped for The Black
+    // Hand (40), which has not finished the current 100-game band.
+    const stats = {
+        Netburners: stat(70, 50), // 120
+        'Slum Snakes': stat(50, 50), // 100
+        'The Black Hand': stat(30, 10), // 40
+    };
+    assert.equal(chooseFaction(stats, 100), 'The Black Hand');
 });
 
 test('depthForFaction deepens for harder factions and is always even', () => {
