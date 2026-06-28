@@ -28,6 +28,7 @@ export const EVAL = {
     TERRITORY: 10,  // per controlled empty point — equal to a stone (true area scoring)
     ATARI: 12,      // per stone in a group with 1 liberty (treat as nearly lost)
     WEAK: 2,        // per stone in a group with 2 liberties (under pressure)
+    CUT: 6,         // per cutting point (empty point adjoining 2+ of one colour's groups)
 } as const;
 
 // A point only counts as territory when one colour reaches it at least this many
@@ -373,6 +374,47 @@ const beam = (grid: Grid, color: string, nodeBranch: number): { grid: Grid; ord:
 };
 
 /**
+ * Count "cutting points" per colour: an empty point orthogonally adjacent to two
+ * or more DISTINCT groups of the same colour — a spot where that colour is not
+ * solidly connected (a hole the opponent can cut, or a link still to be made).
+ * Builds a group-id map once, then scans empty points; computes both colours in
+ * one pass.
+ */
+export const cuttingPointCounts = (grid: Grid): { x: number; o: number } => {
+    const size = grid.length;
+    const groupId: number[][] = grid.map((col) => col.map(() => -1));
+    let nextId = 0;
+    for (let x = 0; x < size; x++) {
+        for (let y = 0; y < size; y++) {
+            if (grid[x][y] === '.' || groupId[x][y] !== -1) continue;
+            for (const [cx, cy] of groupAt(grid, x, y).cells) groupId[cx][cy] = nextId;
+            nextId++;
+        }
+    }
+
+    let x = 0;
+    let o = 0;
+    for (let px = 0; px < size; px++) {
+        for (let py = 0; py < size; py++) {
+            if (grid[px][py] !== '.') continue;
+            const xs = new Set<number>();
+            const os = new Set<number>();
+            for (const [dx, dy] of DIRS) {
+                const nx = px + dx;
+                const ny = py + dy;
+                if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+                const cell = grid[nx][ny];
+                if (cell === 'X') xs.add(groupId[nx][ny]);
+                else if (cell === 'O') os.add(groupId[nx][ny]);
+            }
+            if (xs.size >= 2) x++;
+            if (os.size >= 2) o++;
+        }
+    }
+    return { x, o };
+};
+
+/**
  * Static evaluation of a position, black-positive. Area scoring with safety:
  *   + stones on the board
  *   + empty points controlled by a single colour (territory, by influence)
@@ -422,6 +464,10 @@ export const evaluateBoard = (grid: Grid): number => {
             else if (isFinite(dox) && dox + INFLUENCE_MARGIN <= dx) value -= EVAL.TERRITORY;
         }
     }
+
+    // Connection/cut: penalise our own cutting points, reward the enemy's.
+    const cuts = cuttingPointCounts(grid);
+    value += -EVAL.CUT * cuts.x + EVAL.CUT * cuts.o;
 
     return value;
 };
