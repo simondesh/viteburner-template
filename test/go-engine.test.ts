@@ -171,6 +171,16 @@ test('shapeScore: a hane turning around an enemy stone in contact is rewarded', 
     assert.equal(shapeScore(parseBoard(['O..', 'X..', '...']), 1, 1, 'X'), SHAPE.HANE);
 });
 
+test('shapeScore: a wedge between two enemy groups (cut) is rewarded', () => {
+    // (0,1) is adjacent to the two distinct O groups at (0,0) and (0,2).
+    assert.equal(shapeScore(parseBoard(['O.O', '...', '...']), 0, 1, 'X'), SHAPE.CUT);
+});
+
+test('shapeScore: touching a single enemy group is not a cut', () => {
+    // (0,1) adjoins only one enemy group; no cut bonus (and no other shape here).
+    assert.equal(shapeScore(parseBoard(['O..', '...', '...']), 0, 1, 'X'), 0);
+});
+
 test('shapeScore: a plain move with no neighbours scores zero', () => {
     assert.equal(shapeScore(parseBoard(['..', '..']), 0, 0, 'X'), 0);
 });

@@ -15,6 +15,7 @@ export const SHAPE = {
     EMPTY_TRIANGLE: 50, // penalty: a bad-shaped (inefficient) connection
     CONNECT: 40,        // bonus: joins two of our groups
     HANE: 80,           // bonus: turns the corner around an enemy stone in contact
+    CUT: 60,            // bonus: wedges between two enemy groups (keeps them split)
 } as const;
 
 export const TACTIC = {
@@ -216,6 +217,18 @@ export const shapeScore = (grid: Grid, x: number, y: number, color: string): num
         for (const [cx, cy] of groupAt(grid, nx, ny).cells) seen.add(`${cx},${cy}`);
     }
     if (ownGroups >= 2) score += SHAPE.CONNECT;
+
+    // Cut: the move wedges between >= 2 distinct enemy groups, keeping them split.
+    const enemySeen = new Set<string>();
+    let enemyGroups = 0;
+    for (const [dx, dy] of DIRS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (at(nx, ny) !== enemy || enemySeen.has(`${nx},${ny}`)) continue;
+        enemyGroups++;
+        for (const [cx, cy] of groupAt(grid, nx, ny).cells) enemySeen.add(`${cx},${cy}`);
+    }
+    if (enemyGroups >= 2) score += SHAPE.CUT;
 
     // Hane: diagonal to an enemy stone while we touch one of the two shared cells
     // (turning the corner around an enemy in contact).
