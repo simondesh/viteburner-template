@@ -552,9 +552,10 @@ export const search = async (
     alpha: number,
     beta: number,
     nodeBranch: number,
-    tick: () => Promise<void>,
+    onTick: () => Promise<void>,
+    counter: { n: number },
 ): Promise<number> => {
-    await tick();
+    if (++counter.n % YIELD_NODES === 0) await onTick();
     if (depth === 0) return evaluateBoard(grid);
 
     const moves = beam(grid, toMove, nodeBranch);
@@ -563,7 +564,7 @@ export const search = async (
     if (toMove === 'X') {
         let best = -Infinity;
         for (const m of moves) {
-            best = Math.max(best, await search(m.grid, 'O', depth - 1, alpha, beta, nodeBranch, tick));
+            best = Math.max(best, await search(m.grid, 'O', depth - 1, alpha, beta, nodeBranch, onTick, counter));
             alpha = Math.max(alpha, best);
             if (alpha >= beta) break;
         }
@@ -572,7 +573,7 @@ export const search = async (
 
     let best = Infinity;
     for (const m of moves) {
-        best = Math.min(best, await search(m.grid, 'X', depth - 1, alpha, beta, nodeBranch, tick));
+        best = Math.min(best, await search(m.grid, 'X', depth - 1, alpha, beta, nodeBranch, onTick, counter));
         beta = Math.min(beta, best);
         if (alpha >= beta) break;
     }
@@ -596,10 +597,7 @@ export const selectMove = async (
     rng: () => number = Math.random,
     onTick: () => Promise<void> = async () => {},
 ): Promise<[number, number] | null> => {
-    let nodes = 0;
-    const tick = async () => {
-        if (++nodes % YIELD_NODES === 0) await onTick();
-    };
+    const counter = { n: 0 };
 
     const ranked = rankMoves(grid, 'X').filter((m) => validMoves[m.x]?.[m.y] === true);
     if (ranked.length === 0) return null;
@@ -614,14 +612,14 @@ export const selectMove = async (
     const top = roots.slice(0, rootBranch);
     if (top.length === 0) return null;
 
-    const passValue = await search(grid, 'O', depth - 1, -Infinity, Infinity, nodeBranch, tick);
+    const passValue = await search(grid, 'O', depth - 1, -Infinity, Infinity, nodeBranch, onTick, counter);
 
     let best: [number, number] | null = null;
     let bestValue = passValue;
     let bestJittered = -Infinity;
     for (const m of top) {
         const window = best === null ? passValue : bestValue - TIE_EPSILON;
-        const value = await search(m.grid, 'O', depth - 1, window, Infinity, nodeBranch, tick);
+        const value = await search(m.grid, 'O', depth - 1, window, Infinity, nodeBranch, onTick, counter);
         if (value <= passValue) continue;
         if (best !== null && value < bestValue) continue;
         const jittered = value + rng() * 0.01;
