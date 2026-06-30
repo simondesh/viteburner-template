@@ -2,6 +2,11 @@ import { NS } from '@ns';
 
 /** @param {NS} ns */
 export async function main(ns: NS) {
+    // --no-cloud: skip ALL cloud-server spending (buying + upgrading) so money
+    // accumulates for augmentations. Scheduler / darknet / Go still run.
+    const flags = ns.flags([['no-cloud', false]]);
+    const noCloud = flags['no-cloud'] as boolean;
+
     let numberCloudServers = 0;
     let numberUpgradedCloudServers = 0;
     let ramForUpgrade = 2 ** 5;
@@ -26,34 +31,37 @@ export async function main(ns: NS) {
         }
 
         // Buy / upgrade cloud servers (now always reached — no crashing deploy loop above).
-        const listCloudServers = ns.cloud.getServerNames();
-        numberCloudServers = listCloudServers.length;
-        if (numberCloudServers < ns.cloud.getServerLimit()) {
-            while (
-                ns.getServerMoneyAvailable('home') > ns.cloud.getServerCost(8) &&
-                numberCloudServers < ns.cloud.getServerLimit()
+        // Skipped entirely under --no-cloud so money builds up for augmentations.
+        if (!noCloud) {
+            const listCloudServers = ns.cloud.getServerNames();
+            numberCloudServers = listCloudServers.length;
+            if (numberCloudServers < ns.cloud.getServerLimit()) {
+                while (
+                    ns.getServerMoneyAvailable('home') > ns.cloud.getServerCost(8) &&
+                    numberCloudServers < ns.cloud.getServerLimit()
+                ) {
+                    ns.cloud.purchaseServer('cloud-server-' + numberCloudServers, 8);
+                    numberCloudServers++;
+                    await ns.sleep(400);
+                }
+            } else if (
+                numberCloudServers === ns.cloud.getServerLimit() &&
+                numberUpgradedCloudServers < ns.cloud.getServerLimit()
             ) {
-                ns.cloud.purchaseServer('cloud-server-' + numberCloudServers, 8);
-                numberCloudServers++;
-                await ns.sleep(400);
-            }
-        } else if (
-            numberCloudServers === ns.cloud.getServerLimit() &&
-            numberUpgradedCloudServers < ns.cloud.getServerLimit()
-        ) {
-            while (
-                numberUpgradedCloudServers < ns.cloud.getServerLimit() &&
-                ns.getServerMoneyAvailable('home') >
-                    ns.cloud.getServerUpgradeCost(listCloudServers[numberUpgradedCloudServers], ramForUpgrade)
-            ) {
-                ns.cloud.upgradeServer(listCloudServers[numberUpgradedCloudServers], ramForUpgrade);
-                numberUpgradedCloudServers++;
-                await ns.sleep(400);
-            }
-        } else if (numberUpgradedCloudServers === ns.cloud.getServerLimit()) {
-            if (ramForUpgrade * 2 ** 3 < ns.cloud.getRamLimit()) {
-                ramForUpgrade = ramForUpgrade * 2 ** 3;
-                numberUpgradedCloudServers = 0;
+                while (
+                    numberUpgradedCloudServers < ns.cloud.getServerLimit() &&
+                    ns.getServerMoneyAvailable('home') >
+                        ns.cloud.getServerUpgradeCost(listCloudServers[numberUpgradedCloudServers], ramForUpgrade)
+                ) {
+                    ns.cloud.upgradeServer(listCloudServers[numberUpgradedCloudServers], ramForUpgrade);
+                    numberUpgradedCloudServers++;
+                    await ns.sleep(400);
+                }
+            } else if (numberUpgradedCloudServers === ns.cloud.getServerLimit()) {
+                if (ramForUpgrade * 2 ** 3 < ns.cloud.getRamLimit()) {
+                    ramForUpgrade = ramForUpgrade * 2 ** 3;
+                    numberUpgradedCloudServers = 0;
+                }
             }
         }
 
