@@ -1,4 +1,4 @@
-import { NS } from '@ns';
+import { NS, AutocompleteData } from '@ns';
 
 /** @param {NS} ns */
 export async function main(ns:NS) {
@@ -146,6 +146,6 @@ const authenticateWithNumericExtractedMemo = async (ns:NS, hostname:string,toExt
 /** This lets you tab-complete putting "--tail" on the run command so you can see the script logs as it runs, if you want
  *  If you add support to the script to take other arguments, you can add them here as well for convenience
  *  @param {AutocompleteData} data */
-export function autocomplete(data) {
+export function autocomplete(data: AutocompleteData) {
   return ["--tail"];
 }

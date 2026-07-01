@@ -62,7 +62,9 @@ const chooseMove = async (
 
     // Yield to the game every YIELD_NODES nodes so a deep search never freezes
     // the tab or trips Bitburner's no-yield guard.
-    return selectMove(grid, valid, depth, rootBranch, nodeBranch, Math.random, () => ns.sleep(0));
+    return selectMove(grid, valid, depth, rootBranch, nodeBranch, Math.random, async () => {
+        await ns.sleep(0);
+    });
 };
 
 /** Log the finished game using the faction's persistent stats from analysis.getStats(). */
