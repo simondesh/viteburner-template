@@ -4,7 +4,10 @@
 export interface ServerStat {
     name: string;
     maxMoney: number;
-    minSecurity: number;
+    /** Weaken time in ms — the dominant op time; stands in for cycle length. */
+    weakenTime: number;
+    /** Probability a single hack succeeds (0–1). */
+    hackChance: number;
     requiredHackingLevel: number;
     /** Number of open ports nuke() needs before it will grant root. */
     requiredPorts: number;
@@ -24,8 +27,9 @@ export interface ServerStat {
  *      keep picking a rich server it cannot nuke, the controller's root gate
  *      would skip every cycle, and nothing would ever get hacked.
  *
- * Among the servers that pass, prefer the best money-to-security ratio: the most
- * money for the least weakening/growing effort.
+ * Among the servers that pass, prefer the best THROUGHPUT — money per second:
+ * maxMoney * hackChance / weakenTime. This demotes rich-but-slow servers whose
+ * long cycle time makes them unprofitable in practice.
  */
 export const chooseHackTarget = (
     servers: ServerStat[],
@@ -40,9 +44,9 @@ export const chooseHackTarget = (
         if (server.requiredHackingLevel > hackingLevel) continue;        // out of reach
         if (!server.hasRoot && server.requiredPorts > portOpeners) continue; // can't root yet
         if (server.maxMoney <= 0) continue;                              // nothing to take
-        if (server.minSecurity <= 0) continue;                          // guard divide-by-zero
+        if (server.weakenTime <= 0) continue;                           // guard divide-by-zero
 
-        const score = server.maxMoney / server.minSecurity;
+        const score = (server.maxMoney * server.hackChance) / server.weakenTime;
         if (score > bestScore) {
             bestScore = score;
             best = server.name;
