@@ -126,14 +126,35 @@ function buildPool(ns: NS, rooted: string[]): ServerRam[] {
 }
 
 function pickTarget(ns: NS, rooted: string[]): string {
-    const stats: ServerStat[] = rooted.map((name) => ({
-        name,
-        maxMoney: ns.getServerMaxMoney(name),
-        minSecurity: ns.getServerMinSecurityLevel(name),
-        requiredHackingLevel: ns.getServerRequiredHackingLevel(name),
-        requiredPorts: ns.getServerNumPortsRequired(name),
-        hasRoot: ns.hasRootAccess(name),
-    }));
+    // Steady-state (min-security) throughput needs an accurate weaken time and
+    // hack chance. With Formulas.exe we evaluate them AT min security directly.
+    // Without it (early game) we fall back to live readings, which reflect the
+    // server's CURRENT security and converge to the same values once prepped.
+    const hasFormulas = ns.fileExists('Formulas.exe', 'home');
+    const player = hasFormulas ? ns.getPlayer() : null;
+
+    const stats: ServerStat[] = rooted.map((name) => {
+        let weakenTime: number;
+        let hackChance: number;
+        if (hasFormulas && player) {
+            const srv = ns.getServer(name);
+            srv.hackDifficulty = srv.minDifficulty; // evaluate as if fully prepped
+            weakenTime = ns.formulas.hacking.weakenTime(srv, player);
+            hackChance = ns.formulas.hacking.hackChance(srv, player);
+        } else {
+            weakenTime = ns.getWeakenTime(name);
+            hackChance = ns.hackAnalyzeChance(name);
+        }
+        return {
+            name,
+            maxMoney: ns.getServerMaxMoney(name),
+            weakenTime,
+            hackChance,
+            requiredHackingLevel: ns.getServerRequiredHackingLevel(name),
+            requiredPorts: ns.getServerNumPortsRequired(name),
+            hasRoot: ns.hasRootAccess(name),
+        };
+    });
     return chooseHackTarget(stats, ns.getHackingLevel(), ownedOpeners(ns));
 }
 
