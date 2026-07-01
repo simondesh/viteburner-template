@@ -48,8 +48,9 @@ export async function main(ns: NS) {
         const rooted = all.filter((h) => ns.hasRootAccess(h));
 
         // Reclaim share RAM first so hacking always gets first claim this tick.
-        // (Share loops forever; freeing it here lets batches expand, then we
-        // refill whatever batching leaves over via fillShare below.)
+        // (Share loops forever; freeing it here lets batches expand. Below we
+        // reserve a slice for share on a large farm, then refill leftovers —
+        // both via execShare.)
         killAllShare(ns, rooted);
 
         const pool = buildPool(ns, rooted);

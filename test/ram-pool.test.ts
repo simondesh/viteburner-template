@@ -77,8 +77,9 @@ test('shareReserveGb: zero at or below the threshold, a fraction of total above 
     assert.equal(shareReserveGb(2000, 1024, 0.5), 1000); // above -> 50% of total
 });
 
-test('planShare: distributes up to the budget, largest server first', () => {
-    // shareCost 4, budget 40 -> 10 threads; server a (cap 25) absorbs all 10.
+test('planShare: fills servers in the given order up to the budget', () => {
+    // shareCost 4, budget 40 -> 10 threads; the first server in order (cap 25)
+    // absorbs all 10 and the budget is spent before the second is touched.
     assert.deepEqual(planShare(pool(['a', 100], ['b', 100]), 4, 40), [
         { server: 'a', threads: 10 },
     ]);
