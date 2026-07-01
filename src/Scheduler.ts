@@ -12,7 +12,7 @@ import {
     additionalMsecOffsets,
     batchesThatFit,
 } from './utils/hgw-math';
-import { ServerRam, OpRequest, placeThreads, planOps, totalCapacity } from './utils/ram-pool';
+import { ServerRam, OpRequest, placeThreads, planOps, totalCapacity, shareReserveGb, planShare } from './utils/ram-pool';
 
 // ---- Tunables -------------------------------------------------------------
 const HOME_RESERVE_GB = 32;   // RAM kept free on home for scheduler/go/start
@@ -20,6 +20,8 @@ const HACK_GREED = 0.5;       // fraction of target money stolen per batch
 const BATCH_GAP_MS = 100;     // landing gap between the 4 ops of a batch
 const BATCH_SPACING_MS = 400; // min spacing between consecutive batches
 const SHARE_ENABLED = true;
+const SHARE_RAM_THRESHOLD_GB = 1024; // reserve for share only once total free RAM exceeds 1 TB
+const SHARE_RESERVE_FRACTION = 0.20; // fraction of the pool guaranteed to share above the threshold
 const TICK_MS = 1000;
 const PREP_GAP_MS = 200;      // landing gap between the 3 prep ops
 // ---------------------------------------------------------------------------
@@ -53,9 +55,23 @@ export async function main(ns: NS) {
         const pool = buildPool(ns, rooted);
         const target = pickTarget(ns, rooted);
 
+        // On a large farm (>1 TB free RAM) guarantee a slice to share BEFORE
+        // scheduling, taken from the SMALLEST servers first (reversed pool) so the
+        // big contiguous blocks stay free for batch packing. The reversed array
+        // shares element objects with `pool`, so the debit inside execShare shrinks
+        // the same pool the scheduler then sees (~80%).
+        const shareCost = ns.getScriptRam(SHARE);
+        const totalFree = pool.reduce((sum, s) => sum + s.freeRam, 0);
+        const reserve = shareReserveGb(totalFree, SHARE_RAM_THRESHOLD_GB, SHARE_RESERVE_FRACTION);
+        if (SHARE_ENABLED && reserve > 0) {
+            execShare(ns, [...pool].reverse(), shareCost, reserve);
+        }
+
         scheduleTarget(ns, pool, target);
 
-        if (SHARE_ENABLED) fillShare(ns, pool);
+        // Mop up whatever batching left over (today's behavior, and the only share
+        // below the threshold).
+        if (SHARE_ENABLED) execShare(ns, pool, shareCost, Infinity);
 
         await ns.sleep(TICK_MS);
     }
@@ -300,15 +316,12 @@ function launchPlan(
 
 // ---- Share ----------------------------------------------------------------
 
-function fillShare(ns: NS, pool: ServerRam[]) {
-    const shareCost = ns.getScriptRam(SHARE);
-    const threads = totalCapacity(pool, shareCost);
-    if (threads <= 0) return;
-    for (const s of pool) {
-        const n = Math.floor(s.freeRam / shareCost);
-        if (n > 0) {
-            ns.exec(SHARE, s.server, n);
-            s.freeRam -= n * shareCost;
-        }
+/** Launch share up to a RAM budget across `order`, debiting each server's freeRam
+ *  (so a later schedule/mop-up sees the reduced pool). budgetGb = Infinity fills all. */
+function execShare(ns: NS, order: ServerRam[], shareCost: number, budgetGb: number) {
+    for (const p of planShare(order, shareCost, budgetGb)) {
+        ns.exec(SHARE, p.server, p.threads);
+        const entry = order.find((s) => s.server === p.server);
+        if (entry) entry.freeRam -= p.threads * shareCost;
     }
 }
