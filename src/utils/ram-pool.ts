@@ -78,3 +78,41 @@ export const planOps = (pool: ServerRam[], ops: OpRequest[]): OpPlacement[] | nu
     }
     return result;
 };
+
+/**
+ * How much RAM to guarantee to share this tick: a fraction of the pool once the
+ * pool's total free RAM exceeds the threshold, otherwise nothing. Threshold is
+ * strict (> not >=), so a farm exactly at the threshold reserves nothing.
+ */
+export const shareReserveGb = (
+    totalRam: number,
+    thresholdGb: number,
+    fraction: number,
+): number => (totalRam > thresholdGb ? totalRam * fraction : 0);
+
+/**
+ * Distribute up to `budgetGb` of RAM into whole share threads across the pool,
+ * filling servers in the given order (floor per host). Stops once the budget is
+ * spent. Pass `budgetGb = Infinity` to fill every server. Returns the placement
+ * list ([] if nothing fits within the budget).
+ */
+export const planShare = (
+    pool: ServerRam[],
+    shareCost: number,
+    budgetGb: number,
+): Placement[] => {
+    if (shareCost <= 0) return [];
+    const placements: Placement[] = [];
+    let remaining = budgetGb;
+    for (const s of pool) {
+        if (remaining < shareCost) break;
+        const affordable = serverCapacity(s.freeRam, shareCost);
+        const byBudget = Math.floor(remaining / shareCost);
+        const n = Math.min(affordable, byBudget);
+        if (n > 0) {
+            placements.push({ server: s.server, threads: n });
+            remaining -= n * shareCost;
+        }
+    }
+    return placements;
+};
