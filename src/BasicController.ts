@@ -54,7 +54,11 @@ async function gettarget(ns: NS): Promise<string> {
     const stats: ServerStat[] = serverNames.map((name) => ({
         name,
         maxMoney: ns.getServerMaxMoney(name),
-        minSecurity: ns.getServerMinSecurityLevel(name),
+        // Live (current-security) readings — this basic controller does not use
+        // the Formulas API; they still rank targets by throughput and work with
+        // or without Formulas.exe.
+        weakenTime: ns.getWeakenTime(name),
+        hackChance: ns.hackAnalyzeChance(name),
         requiredHackingLevel: ns.getServerRequiredHackingLevel(name),
         requiredPorts: ns.getServerNumPortsRequired(name),
         hasRoot: ns.hasRootAccess(name),
